@@ -148,6 +148,10 @@ tr:last-child td{border-bottom:none;} tbody tr:hover td{background:#f8faff;}
 .mois-filter select:focus{border-color:var(--bes);}
 /* ═══════════════════════ RESPONSIVE MOBILE (≤768px) ═══════════════════════ */
 @media (max-width:768px){
+  /* .card a overflow:hidden en permanence (desktop et mobile) — ça coupait les
+     tableaux larges avant même qu'ils puissent défiler dans .content. Chaque
+     carte devient elle-même une zone de défilement horizontal pour son tableau. */
+  .card{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   body{flex-direction:column;height:auto;min-height:100vh;overflow-x:hidden;overflow-y:auto;}
   .sidebar{width:100%;flex-direction:row;align-items:center;overflow-x:auto;-webkit-overflow-scrolling:touch;flex-shrink:0;}
   .logo{padding:10px 14px;border-bottom:none;border-right:1px solid #1e2f40;flex-shrink:0;white-space:nowrap;}
