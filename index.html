@@ -4512,6 +4512,40 @@ function doImport() {
       imported++;
     });
   }
+  // Import encaissements (trésorerie — entrées d'argent)
+  if(data.encaissements&&Array.isArray(data.encaissements)){
+    if(!D.encaissements) D.encaissements=[];
+    data.encaissements.forEach((e,i)=>{
+      // Dédoublonnage simple : même date + même montant + même réf déjà présent → ignoré
+      const dup = D.encaissements.find(x=>x.date===e.date && x.montant===parseFloat(e.montant)&&(x.refChq||'')===(e.refChq||''));
+      if(dup){ skipped++; return; }
+      D.encaissements.unshift({
+        id:Date.now()+imported+i, date:e.date||today(),
+        docId:null, docNum:e.docNum||'', docType:e.docType||'', clientNom:e.clientNom||'',
+        montant:parseFloat(e.montant)||0, mode:e.mode||'Virement',
+        refChq:e.refChq||'', note:e.note||''
+      });
+      imported++;
+    });
+  }
+  // Import décaissements (trésorerie — sorties d'argent, avec suivi retard/relance)
+  if(data.decaissements&&Array.isArray(data.decaissements)){
+    if(!D.decaissements) D.decaissements=[];
+    data.decaissements.forEach((d2,i)=>{
+      const dup = D.decaissements.find(x=>x.date===d2.date && x.montant===parseFloat(d2.montant)&&(x.refChq||'')===(d2.refChq||''));
+      if(dup){ skipped++; return; }
+      D.decaissements.unshift({
+        id:Date.now()+imported+i+500000, date:d2.date||today(),
+        categorie:d2.categorie||'Autre', benef:d2.benef||'',
+        montant:parseFloat(d2.montant)||0, mode:d2.mode||'Virement',
+        refChq:d2.refChq||'', nfac:d2.nfac||'', dateFacture:d2.dateFacture||'',
+        joursRetard:(d2.joursRetard===''||d2.joursRetard==null)?'':parseInt(d2.joursRetard),
+        statutRelance:d2.statutRelance||'', factureOriginal:d2.factureOriginal||'',
+        note:d2.note||''
+      });
+      imported++;
+    });
+  }
   // Import docs
   const docs=data.documents||[];
   docs.forEach(d=>{
