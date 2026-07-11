@@ -5405,6 +5405,12 @@ const PAGE_HTML = `
               <option value="Transport">Transport</option>
               <option value="Autre">Autre</option>
             </select>
+            <select id="flt-statut-dec" onchange="renderDecaissements()">
+              <option value="">Tous statuts</option>
+              <option value="Réglée">Réglée</option>
+              <option value="À relancer">À relancer</option>
+              <option value="DANGER">DANGER</option>
+            </select>
           </div>
           <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red);" onclick="deleteSelectedDec()">🗑 Supprimer sélection</button>
           <button class="btn btn-amber btn-sm" onclick="openDecModal(-1)">+ Décaissement</button>
@@ -5427,6 +5433,8 @@ const MODALS_HTML = `
   <div class="form-grid">
     <div class="fg"><label>Date *</label><input type="date" id="enc-date"></div>
     <div class="fg full"><label>Facture liée (optionnel)</label><select id="enc-doc" onchange="onChangeEncDoc()"></select></div>
+    <div class="fg full"><label>Client (si pas de facture liée)</label><input id="enc-client" list="dl-clients" placeholder="Choisir dans la liste ou taper un nom…" autocomplete="off"></div>
+    <datalist id="dl-clients"></datalist>
     <div class="fg"><label>Montant (MAD) *</label><input type="number" id="enc-montant" step="0.01" min="0"></div>
     <div class="fg"><label>Mode de paiement</label>
       <select id="enc-mode">
@@ -5465,7 +5473,8 @@ const MODALS_HTML = `
         <option value="Autre">Autre</option>
       </select>
     </div>
-    <div class="fg full"><label>Fournisseur / Bénéficiaire</label><input id="dec-benef" placeholder="Optionnel"></div>
+    <div class="fg full"><label>Fournisseur / Bénéficiaire</label><input id="dec-benef" list="dl-fournisseurs" placeholder="Choisir dans la liste ou taper un nom…" autocomplete="off"></div>
+    <datalist id="dl-fournisseurs"></datalist>
     <div class="fg"><label>Montant (MAD) *</label><input type="number" id="dec-montant" step="0.01" min="0"></div>
     <div class="fg"><label>Mode de paiement</label>
       <select id="dec-mode">
@@ -5600,7 +5609,7 @@ window.renderTresorerie = function(){
 function statutBadge(v){
   if(v==null || v==='') return '-';
   const up = String(v).toUpperCase();
-  const cls = up.indexOf('DANGER')>=0 ? 'br' : (up.indexOf('ATTENTION')>=0 ? 'ba' : 'bg');
+  const cls = up.indexOf('DANGER')>=0 ? 'br' : ((up.indexOf('RELANCER')>=0||up.indexOf('ATTENTION')>=0) ? 'ba' : 'bg');
   return `<span class="badge ${cls}">${v}</span>`;
 }
 
@@ -5615,9 +5624,10 @@ function calcJoursRetard(dateOperation, nfac, dateFacture){
   const diff = Math.floor((d0-d1)/86400000);
   return diff>0 ? diff : 0;
 }
-// Règle : 0-30 jours = À relancer, 31 jours et plus = DANGER.
+// Règle : 0 jour = Réglée, 1-30 jours = À relancer, 31 jours et plus = DANGER.
 function calcStatutRelance(jr){
   if(jr===''||jr==null||isNaN(jr)) return '';
+  if(jr<=0) return 'Réglée';
   return jr>=31 ? 'DANGER' : 'À relancer';
 }
 
@@ -5654,8 +5664,11 @@ window.openEncModal = function(idx){
     const di=D.docs.indexOf(d);
     return `<option value="${di}">${d.num} — ${d.clientNom} (reste : ${fmt(restePayer(d))} MAD)</option>`;
   }).join('');
+  const dlC = document.getElementById('dl-clients');
+  if(dlC) dlC.innerHTML = (D.clients||[]).map(c=>`<option value="${(c.nom||'').replace(/"/g,'&quot;')}">`).join('');
   if(idx===-1){
     document.getElementById('enc-date').value = today();
+    document.getElementById('enc-client').value = '';
     document.getElementById('enc-montant').value = '';
     document.getElementById('enc-mode').value = 'Espèces';
     document.getElementById('enc-ref').value = '';
@@ -5666,6 +5679,7 @@ window.openEncModal = function(idx){
     document.getElementById('enc-date').value = e.date||today();
     const di = D.docs.findIndex(d=>d.id===e.docId);
     sel.value = di>=0 ? di : '';
+    document.getElementById('enc-client').value = (di<0 ? (e.clientNom||'') : '');
     document.getElementById('enc-montant').value = e.montant||0;
     document.getElementById('enc-mode').value = e.mode||'Espèces';
     document.getElementById('enc-ref').value = e.refChq||'';
@@ -5690,10 +5704,11 @@ window.saveEnc = function(){
   const montant = parseFloat(document.getElementById('enc-montant').value)||0;
   if(montant<=0){ notify('Montant invalide','err'); return; }
   const doc = di!=='' ? D.docs[parseInt(di)] : null;
+  const clientLibre = document.getElementById('enc-client').value.trim();
   const enc = {
     id: editIdx>=0 ? D.encaissements[editIdx].id : Date.now(),
     date: document.getElementById('enc-date').value||today(),
-    docId: doc?doc.id:null, docNum: doc?doc.num:'', docType: doc?doc.type:'', clientNom: doc?doc.clientNom:'',
+    docId: doc?doc.id:null, docNum: doc?doc.num:'', docType: doc?doc.type:'', clientNom: doc?doc.clientNom:clientLibre,
     montant, mode: document.getElementById('enc-mode').value,
     refChq: document.getElementById('enc-ref').value,
     note: document.getElementById('enc-note').value
@@ -5737,7 +5752,15 @@ window.renderDecaissements = function(){
   fillMoisSelect('flt-mois-dec', D.decaissements.map(d=>d.date));
   const m=(document.getElementById('flt-mois-dec')||{}).value||'';
   const cat=(document.getElementById('flt-cat-dec')||{}).value||'';
-  const list = D.decaissements.filter(d=>(!m || (d.date||'').startsWith(m)) && (!cat || d.categorie===cat));
+  const statutFlt=(document.getElementById('flt-statut-dec')||{}).value||'';
+  let list = D.decaissements.filter(d=>(!m || (d.date||'').startsWith(m)) && (!cat || d.categorie===cat));
+  if(statutFlt){
+    list = list.filter(d=>{
+      const jr = calcJoursRetard(d.date, d.nfac, d.dateFacture);
+      const st = jr!=='' ? calcStatutRelance(jr) : (d.statutRelance||'');
+      return st===statutFlt;
+    });
+  }
   const tb=document.getElementById('list-dec');
   if(!tb) return;
   if(!list.length){ tb.innerHTML='<tr><td colspan="13" style="text-align:center;padding:22px;color:var(--muted);">Aucun décaissement</td></tr>'; return; }
@@ -5766,6 +5789,8 @@ window.renderDecaissements = function(){
 window.openDecModal = function(idx){
   document.getElementById('dec-edit-idx').value = idx;
   document.getElementById('dec-modal-title').textContent = idx===-1?'Nouveau décaissement':'Modifier décaissement';
+  const dlF = document.getElementById('dl-fournisseurs');
+  if(dlF) dlF.innerHTML = (D.fournisseurs||[]).map(f=>`<option value="${(f.nom||'').replace(/"/g,'&quot;')}">`).join('');
   if(idx===-1){
     document.getElementById('dec-date').value = today();
     document.getElementById('dec-cat').value = 'Achat fournisseur';
