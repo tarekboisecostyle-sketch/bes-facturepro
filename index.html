@@ -2113,7 +2113,7 @@ function renderDocRows() {
         <option ${r.unite==='boite'?'selected':''}>boite</option>
         <option ${r.unite==='ml'?'selected':''}>ml</option>
       </select></td>
-      <td class="cq tc"><input type="number" value="${r.q||1}" min="1" style="width:56px;text-align:center;font-size:12px;padding:5px;border:1px solid #c8d5e5;border-radius:4px;min-height:32px;" oninput="docRows[${i}].q=+this.value;calcDoc();"></td>
+      <td class="cq tc"><input type="number" value="${r.q||1}" min="0" step="0.01" style="width:56px;text-align:center;font-size:12px;padding:5px;border:1px solid #c8d5e5;border-radius:4px;min-height:32px;" oninput="docRows[${i}].q=+this.value;calcDoc();"></td>
       <td class="cp tr"><input type="number" value="${r.pu||0}" step="0.01" style="width:96px;text-align:right;font-size:12px;padding:5px 7px;border:1px solid #c8d5e5;border-radius:4px;min-height:32px;" oninput="docRows[${i}].pu=+this.value;calcDoc();"></td>
       <td class="ct tr" id="dr-tot-${i}">${fmt((r.q||1)*(r.pu||0))} MAD</td>
       <td><button onclick="docRows.splice(${i},1);renderDocRows();calcDoc();" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;">✕</button></td>
@@ -4559,11 +4559,17 @@ function doImport() {
     if(D.docs.find(x=>x.num===num&&x.type===d.docType)){skipped++;return;}
     let ci=D.clients.findIndex(c=>c.nom===d.cN);
     if(ci<0&&d.cN){D.clients.push({nom:d.cN,adresse:d.cA||'',ice:d.cI||'',tel:'',email:'',ville:'',type:'entreprise'});ci=D.clients.length-1;}
-    const ht=d.ht||(d.items||[]).reduce((s,r)=>s+(r.q||1)*(r.pu||0),0);
+    const ht=d.ht||(d.items||[]).reduce((s,r)=>s+((Number(r.u)||1)*(Number(r.q)||1))*(r.pu||0),0);
     const tva=d.tvaV||20; const ttc=d.ttc||(ht+ht*tva/100);
     D.docs.unshift({id:Date.now()+imported,type:d.docType,num,date:d.date,statut:'brouillon',
       clientNom:d.cN||'',clientAdresse:d.cA||'',clientIce:d.cI||'',
-      items:(d.items||[]).map(r=>({des:r.des,dim:r.dim||'',unite:r.unite||'u',q:r.q,pu:r.pu})),
+      items:(d.items||[]).map(r=>{
+        // Replie le multiplicateur u (superficie/métrage) dans la quantité affichée.
+        // Ex. m² : u=12.5, q=1 -> QTÉ affiche 12,5. Unité normale : u=1 -> QTÉ inchangée.
+        const uu=Number(r.u)||1, qq=Number(r.q)||1;
+        const qEff=Math.round(uu*qq*1000)/1000;
+        return {des:r.des,dim:r.dim||'',unite:r.unite||'u',q:qEff,pu:r.pu};
+      }),
       ht,tva,ttc,avancePct:d.aPct||0,notes:''});
     imported++;
   });
@@ -5363,7 +5369,16 @@ if(!D.decaissements) D.decaissements = [];
 // Pas de projet Firebase par défaut : chaque installation doit avoir son propre
 // projet privé (créé et collé par l'utilisateur dans Paramètres > Synchronisation Cloud)
 // pour que les données de l'entreprise ne soient jamais partagées avec personne d'autre.
-if(!D.cloud) D.cloud = { enabled:false };
+// La config cloud (clés Firebase) est stockée dans SA PROPRE clé localStorage,
+// séparée des données 'bes_v3'. Ainsi elle survit à une restauration de sauvegarde,
+// un import JSON ou une synchro cloud — plus besoin de re-remplir les clés à chaque fois.
+const CLOUD_CFG_KEY = 'bes_cloud_cfg';
+(function(){
+  let saved=null;
+  try{ saved = JSON.parse(localStorage.getItem(CLOUD_CFG_KEY)); }catch(e){}
+  if(saved && saved.apiKey){ D.cloud = saved; }   // priorité absolue à la config dédiée
+  else if(!D.cloud){ D.cloud = { enabled:false }; }
+})();
 
 // ─────────────────────────── INJECTION HTML ───────────────────────────
 const NAV_ITEM_HTML = '<div class="nav-item" onclick="nav(\'tresorerie\',this)">💰 Trésorerie</div>';
@@ -6040,6 +6055,7 @@ window.saveCloudConfig = function(){
   });
   D.cloud.enabled = document.getElementById('cl-enabled').checked;
   save();
+  try{ localStorage.setItem(CLOUD_CFG_KEY, JSON.stringify(D.cloud)); }catch(e){}
   notify('Configuration cloud enregistrée ✅','ok');
   if(D.cloud.enabled) initCloudSync();
 };
