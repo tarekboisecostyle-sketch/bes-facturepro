@@ -723,7 +723,7 @@ tr:last-child td{border-bottom:none;} tbody tr:hover td{background:#f8faff;}
       </div>
       <div class="card">
         <div class="card-hdr"><div class="card-title">Historique imports</div></div>
-        <table><thead><tr><th>Date</th><th>Source</th><th>Docs importés</th><th>Statut</th></tr></thead>
+        <table><thead><tr><th style="width:150px;">Date &amp; heure</th><th>Nature du contenu importé</th><th style="width:90px;text-align:center;">Total</th><th style="width:90px;">Statut</th></tr></thead>
         <tbody id="import-hist"></tbody></table>
       </div>
     </div>
@@ -4377,17 +4377,19 @@ function doImport() {
 
   let imported=0, skipped=0;
   const numsAttribues=[];
+  // Détail par nature de ce qui est réellement importé (pour l'historique)
+  const nat={factures:0,devis:0,autresDocs:0,clients:0,produits:0,entrees:0,inventaires:0,bc:0,encaissements:0,decaissements:0};
 
   // Import clients
   if(data.clients&&Array.isArray(data.clients)){
     data.clients.forEach(c=>{
-      if(!D.clients.find(x=>x.nom===c.nom)){D.clients.push(c);imported++;}
+      if(!D.clients.find(x=>x.nom===c.nom)){D.clients.push(c);imported++;nat.clients++;}
     });
   }
   // Import stock
   if(data.stock&&Array.isArray(data.stock)){
     data.stock.forEach(p=>{
-      if(!D.stock.find(x=>x.ref===p.ref)){D.stock.push(p);imported++;}
+      if(!D.stock.find(x=>x.ref===p.ref)){D.stock.push(p);imported++;nat.produits++;}
     });
   }
   // Import entrées de stock (BL fournisseurs)
@@ -4434,7 +4436,7 @@ function doImport() {
         D.stock[pi].qty = nQ;
         D.stock[pi].pmp = nP;
         if(!D.stock[pi].pu && pu>0) D.stock[pi].pu = pu;
-        imported++;
+        imported++;nat.entrees++;
       });
       if(blRef) numsAttribues.push(`BL ${blRef} → ${(bl.lignes||[]).length} entrée(s)`);
     });
@@ -4478,7 +4480,7 @@ function doImport() {
       depuisDate: null,
       importeDepuisPhoto: true
     };
-    imported++;
+    imported++;nat.inventaires++;
     numsAttribues.push(`INVENTAIRE ${inv.typeInv==='periodique'?'Périodique':'Inopinée'} → prêt à valider`);
   }
   // Import BC (bons de commande)
@@ -4509,7 +4511,7 @@ function doImport() {
         })),
         totalHT:b.totalHT||(b.lignes||[]).reduce((s,l)=>s+(l.q||1)*(l.pu||0),0)
       });
-      imported++;
+      imported++;nat.bc++;
     });
   }
   // Import encaissements (trésorerie — entrées d'argent)
@@ -4525,7 +4527,7 @@ function doImport() {
         montant:parseFloat(e.montant)||0, mode:e.mode||'Virement',
         refChq:e.refChq||'', note:e.note||''
       });
-      imported++;
+      imported++;nat.encaissements++;
     });
   }
   // Import décaissements (trésorerie — sorties d'argent, avec suivi retard/relance)
@@ -4543,7 +4545,7 @@ function doImport() {
         statutRelance:d2.statutRelance||'', factureOriginal:d2.factureOriginal||'',
         note:d2.note||''
       });
-      imported++;
+      imported++;nat.decaissements++;
     });
   }
   // Import docs
@@ -4572,8 +4574,13 @@ function doImport() {
       }),
       ht,tva,ttc,avancePct:d.aPct||0,notes:''});
     imported++;
+    // Classer le document selon sa nature
+    const dt=(d.docType||'').toUpperCase();
+    if(dt==='FACTURE') nat.factures++;
+    else if(dt==='DEVIS') nat.devis++;
+    else nat.autresDocs++;
   });
-  D.imports.unshift({date:new Date().toLocaleString('fr-FR'),source:'JSON',count:imported,status:'success'});
+  D.imports.unshift({date:new Date().toLocaleString('fr-FR'),source:'JSON',count:imported,status:'success',detail:nat});
   save();
   let msg=`✅ ${imported} élément(s) importé(s)`+(skipped>0?` | ${skipped} ignoré(s)`:'');
   if(numsAttribues.length>0) msg+=`<br><span style="font-size:11px;">📋 ${numsAttribues.join(' | ')}</span>`;
@@ -4589,12 +4596,44 @@ function showImportMsg(type,msg){
   el.innerHTML=`<div style="padding:9px 13px;border-radius:7px;font-size:12px;background:${type==='ok'?'#dcfce7':'#fee2e2'};color:${type==='ok'?'#065f46':'#991b1b'};border:1px solid ${type==='ok'?'#86efac':'#fca5a5'};">${msg}</div>`;
 }
 
+// Nature des éléments importables : [clé, icône, singulier, pluriel, couleur fond, couleur texte]
+const IMPORT_NAT=[
+  ['factures',     '🧾','facture',        'factures',        '#dbeafe','#1e40af'],
+  ['devis',        '📝','devis',          'devis',           '#e0e7ff','#3730a3'],
+  ['autresDocs',   '📄','autre document', 'autres documents','#f1f5f9','#475569'],
+  ['bc',           '🛒','bon de commande','bons de commande','#fef3c7','#92400e'],
+  ['clients',      '👥','client',         'clients',         '#ede9fe','#6d28d9'],
+  ['produits',     '📦','produit',        'produits',        '#cffafe','#0e7490'],
+  ['entrees',      '⬇️','entrée de stock','entrées de stock','#dcfce7','#166534'],
+  ['inventaires',  '📋','inventaire',     'inventaires',     '#ffedd5','#c2410c'],
+  ['encaissements','💰','encaissement',   'encaissements',   '#d1fae5','#047857'],
+  ['decaissements','💸','décaissement',   'décaissements',   '#fee2e2','#b91c1c'],
+];
+
+// Construit les badges détaillés d'un import selon la nature de son contenu
+function importNatureChips(imp){
+  const d=imp.detail;
+  // Anciens imports (avant cette fonctionnalité) : pas de détail → repli sur le total
+  if(!d) return `<span style="color:var(--muted);font-size:12px;">${imp.count||0} élément(s) <span style="font-size:10px;opacity:.7;">(détail non enregistré)</span></span>`;
+  const chips=IMPORT_NAT
+    .filter(([k])=>(d[k]||0)>0)
+    .map(([k,ic,sg,pl,bg,fg])=>{
+      const n=d[k];
+      return `<span style="display:inline-flex;align-items:center;gap:4px;background:${bg};color:${fg};padding:3px 9px;border-radius:20px;font-size:11px;font-weight:700;margin:2px 4px 2px 0;">${ic} ${n} ${n>1?pl:sg}</span>`;
+    }).join('');
+  return chips || `<span style="color:var(--muted);font-size:12px;">Aucun élément importé</span>`;
+}
+
 function renderImportHist(){
   const tb=document.getElementById('import-hist');
-  tb.innerHTML=D.imports.slice(0,20).map(imp=>`<tr>
-    <td>${imp.date}</td><td>${imp.source}</td>
-    <td><strong>${imp.count}</strong> élément(s)</td>
-    <td><span class="status s-p">Succès</span></td></tr>`).join('')||'<tr><td colspan="4" style="text-align:center;padding:18px;color:var(--muted);">Aucun import</td></tr>';
+  tb.innerHTML=D.imports.slice(0,20).map(imp=>{
+    const [dateJour,dateHeure]=(imp.date||'').split(' ');
+    return `<tr>
+    <td><div style="font-weight:600;">${dateJour||imp.date||''}</div>${dateHeure?`<div style="font-size:11px;color:var(--muted);">${dateHeure}</div>`:''}<div style="font-size:10px;color:var(--muted);margin-top:2px;">Source : ${imp.source||'JSON'}</div></td>
+    <td style="line-height:1.9;">${importNatureChips(imp)}</td>
+    <td style="text-align:center;"><strong style="font-size:15px;">${imp.count||0}</strong></td>
+    <td><span class="status s-p">✓ Succès</span></td></tr>`;
+  }).join('')||'<tr><td colspan="4" style="text-align:center;padding:18px;color:var(--muted);">Aucun import</td></tr>';
 }
 
 // ═══════════════════════════ PARAMS ═══════════════════════════
@@ -5366,29 +5405,18 @@ document.getElementById('tbar').innerHTML='<button class="btn btn-primary btn-sm
 // ─────────────────────────── MIGRATION DONNÉES ───────────────────────────
 if(!D.encaissements) D.encaissements = [];
 if(!D.decaissements) D.decaissements = [];
-// Projet Firebase de BOIS ECO-STYLE (Tarek) intégré en dur ci-dessous : ainsi,
-// où que ce fichier index.html soit ouvert (n'importe quel PC/navigateur, tant
-// qu'il vient bien de ce dépôt GitHub), la synchronisation cloud se connecte
-// automatiquement sans jamais redemander les clés.
-// La config cloud (clés Firebase) reste aussi sauvegardée dans SA PROPRE clé
-// localStorage, séparée des données 'bes_v3'. Ainsi elle survit à une restauration
-// de sauvegarde, un import JSON ou une synchro cloud — et si l'utilisateur modifie
-// manuellement les clés dans Paramètres, cette version locale garde la priorité.
+// Pas de projet Firebase par défaut : chaque installation doit avoir son propre
+// projet privé (créé et collé par l'utilisateur dans Paramètres > Synchronisation Cloud)
+// pour que les données de l'entreprise ne soient jamais partagées avec personne d'autre.
+// La config cloud (clés Firebase) est stockée dans SA PROPRE clé localStorage,
+// séparée des données 'bes_v3'. Ainsi elle survit à une restauration de sauvegarde,
+// un import JSON ou une synchro cloud — plus besoin de re-remplir les clés à chaque fois.
 const CLOUD_CFG_KEY = 'bes_cloud_cfg';
-const DEFAULT_CLOUD_CFG = {
-  enabled: true,
-  apiKey: "AIzaSyBMbIq-tpK59vV2zc403hoRVf6qy_8Up6c",
-  authDomain: "tm-bes.firebaseapp.com",
-  projectId: "tm-bes",
-  storageBucket: "tm-bes.firebasestorage.app",
-  messagingSenderId: "1043123612179",
-  appId: "1:1043123612179:web:b24e448c1199f3a83f2de6"
-};
 (function(){
   let saved=null;
   try{ saved = JSON.parse(localStorage.getItem(CLOUD_CFG_KEY)); }catch(e){}
-  if(saved && saved.apiKey){ D.cloud = saved; }   // priorité absolue à une config locale déjà enregistrée
-  else { D.cloud = Object.assign({}, DEFAULT_CLOUD_CFG); }
+  if(saved && saved.apiKey){ D.cloud = saved; }   // priorité absolue à la config dédiée
+  else if(!D.cloud){ D.cloud = { enabled:false }; }
 })();
 
 // ─────────────────────────── INJECTION HTML ───────────────────────────
