@@ -5366,18 +5366,29 @@ document.getElementById('tbar').innerHTML='<button class="btn btn-primary btn-sm
 // ─────────────────────────── MIGRATION DONNÉES ───────────────────────────
 if(!D.encaissements) D.encaissements = [];
 if(!D.decaissements) D.decaissements = [];
-// Pas de projet Firebase par défaut : chaque installation doit avoir son propre
-// projet privé (créé et collé par l'utilisateur dans Paramètres > Synchronisation Cloud)
-// pour que les données de l'entreprise ne soient jamais partagées avec personne d'autre.
-// La config cloud (clés Firebase) est stockée dans SA PROPRE clé localStorage,
-// séparée des données 'bes_v3'. Ainsi elle survit à une restauration de sauvegarde,
-// un import JSON ou une synchro cloud — plus besoin de re-remplir les clés à chaque fois.
+// Projet Firebase de BOIS ECO-STYLE (Tarek) intégré en dur ci-dessous : ainsi,
+// où que ce fichier index.html soit ouvert (n'importe quel PC/navigateur, tant
+// qu'il vient bien de ce dépôt GitHub), la synchronisation cloud se connecte
+// automatiquement sans jamais redemander les clés.
+// La config cloud (clés Firebase) reste aussi sauvegardée dans SA PROPRE clé
+// localStorage, séparée des données 'bes_v3'. Ainsi elle survit à une restauration
+// de sauvegarde, un import JSON ou une synchro cloud — et si l'utilisateur modifie
+// manuellement les clés dans Paramètres, cette version locale garde la priorité.
 const CLOUD_CFG_KEY = 'bes_cloud_cfg';
+const DEFAULT_CLOUD_CFG = {
+  enabled: true,
+  apiKey: "AIzaSyBMblq-tpK59vV2zc4O3hoRVf6qy_8Up6c",
+  authDomain: "tm-bes.firebaseapp.com",
+  projectId: "tm-bes",
+  storageBucket: "tm-bes.firebasestorage.app",
+  messagingSenderId: "1043123612179",
+  appId: "1:1043123612179:web:b24e448c1199f3a83f2de6"
+};
 (function(){
   let saved=null;
   try{ saved = JSON.parse(localStorage.getItem(CLOUD_CFG_KEY)); }catch(e){}
-  if(saved && saved.apiKey){ D.cloud = saved; }   // priorité absolue à la config dédiée
-  else if(!D.cloud){ D.cloud = { enabled:false }; }
+  if(saved && saved.apiKey){ D.cloud = saved; }   // priorité absolue à une config locale déjà enregistrée
+  else { D.cloud = Object.assign({}, DEFAULT_CLOUD_CFG); }
 })();
 
 // ─────────────────────────── INJECTION HTML ───────────────────────────
