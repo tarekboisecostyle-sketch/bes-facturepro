@@ -6180,29 +6180,92 @@ if(D.cloud && D.cloud.enabled) initCloudSync();
 (function(){
 
 const HKEY = 'bes_historique_v1';
-const HIST_MAX = 40; // nombre de versions conservées
+const HIST_MAX = 20;                    // nombre max de versions conservées
+const HIST_MAX_CHARS = 1500000;         // ≈ 1,5 Mo max pour tout l'historique
+const LS_QUOTA = 5 * 1024 * 1024;       // quota habituel du navigateur (≈ 5 Mo)
 
 function getHistorique(){
   try{ return JSON.parse(localStorage.getItem(HKEY)||'[]'); }
   catch(e){ return []; }
 }
+const isQuota = e => e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || /quota/i.test(e.message||''));
+const BACKUP_PREFIXES = ['BES_FacturePro_backup_migration_','BES_FacturePro_backup_recalc_','BES_FacturePro_backup_manual_'];
+
+// Espace utilisé dans le navigateur, par catégorie (en caractères ≈ octets)
+window.besStorageUsage = function(){
+  const u = {data:0, hist:0, backups:0, autres:0, total:0, nbBackups:0};
+  for(let i=0;i<localStorage.length;i++){
+    const k = localStorage.key(i); const v = localStorage.getItem(k)||'';
+    const n = k.length + v.length; // le quota du navigateur se compte en caractères
+    if(k === KEY) u.data += n;
+    else if(k === HKEY) u.hist += n;
+    else if(BACKUP_PREFIXES.some(p => k.startsWith(p))){ u.backups += n; u.nbBackups++; }
+    else u.autres += n;
+    u.total += n;
+  }
+  u.pct = Math.min(100, Math.round(u.total*100/LS_QUOTA));
+  return u;
+};
+// Libère de l'espace sans toucher aux données : réduit l'historique et supprime
+// les anciennes sauvegardes internes (garde la plus récente).
+window.besLibererEspace = function(niveau){
+  let libere = 0;
+  const hist = getHistorique();
+  const garder = niveau >= 2 ? 0 : 3;
+  if(hist.length > garder){
+    const avant = (localStorage.getItem(HKEY)||'').length;
+    const reste = garder ? hist.slice(-garder) : [];
+    try{ if(reste.length) localStorage.setItem(HKEY, JSON.stringify(reste)); else localStorage.removeItem(HKEY); }
+    catch(e){ localStorage.removeItem(HKEY); }
+    libere += avant - (localStorage.getItem(HKEY)||'').length;
+  }
+  const keys = [];
+  for(let i=0;i<localStorage.length;i++){ const k = localStorage.key(i); if(BACKUP_PREFIXES.some(p => k && k.startsWith(p))) keys.push(k); }
+  keys.sort().reverse();
+  keys.slice(niveau >= 2 ? 0 : 1).forEach(k => { libere += (localStorage.getItem(k)||'').length; localStorage.removeItem(k); });
+  return libere;
+};
 
 // ─────────────────────────── SAVE (monkey-patch) ───────────────────────────
 const _origSave3 = window.save;
 window.save = function(){
+  // 1) Historique : JAMAIS bloquant, limité en nombre ET en taille
   try{
     const prevRaw = localStorage.getItem(KEY);
     if(prevRaw){
-      const hist = getHistorique();
+      let hist = getHistorique();
       const last = hist[hist.length-1];
       if(!last || last.d !== prevRaw){
         hist.push({ t: Date.now(), d: prevRaw });
         while(hist.length > HIST_MAX) hist.shift();
-        localStorage.setItem(HKEY, JSON.stringify(hist));
+        let tot = hist.reduce((s, x) => s + (x.d||'').length, 0);
+        while(hist.length > 1 && tot > HIST_MAX_CHARS){ tot -= (hist.shift().d||'').length; }
+        // garder de la place pour les données : l'historique cède toujours en premier
+        let ok = false;
+        while(!ok && hist.length){
+          try{ localStorage.setItem(HKEY, JSON.stringify(hist)); ok = true; }
+          catch(e){ if(!isQuota(e)) throw e; hist.shift(); }
+        }
+        if(!hist.length) localStorage.removeItem(HKEY);
       }
     }
   } catch(e){ console.error('Historique error', e); }
-  _origSave3();
+  // 2) Sauvegarde des données : en cas de mémoire pleine, libérer puis réessayer
+  try{ _origSave3(); window._besSaveFail = false; return true; }
+  catch(e){
+    if(!isQuota(e)){ console.error(e); notify('❌ Erreur d\'enregistrement : '+e.message,'err'); return false; }
+    for(const niveau of [1, 2]){
+      besLibererEspace(niveau);
+      try{ _origSave3(); notify('⚠️ Mémoire du navigateur pleine : historique et anciennes sauvegardes nettoyés — modification enregistrée ✅','ok'); window._besSaveFail = false; return true; }
+      catch(e2){ if(!isQuota(e2)) break; }
+    }
+    window._besSaveFail = true;
+    const u = besStorageUsage();
+    alert('❌ MODIFICATION NON ENREGISTRÉE\n\nLa mémoire du navigateur est pleine ('+(u.total/1048576).toFixed(2)+' Mo utilisés).\n\n' +
+      '1) Allez dans Paramètres → « Télécharger la sauvegarde complète » pour garder vos données.\n' +
+      '2) Page Historique → « 🧹 Libérer de l\'espace ».\n\nNe fermez pas la page avant d\'avoir téléchargé la sauvegarde.');
+    return false;
+  }
 };
 
 // ─────────────────────────── INJECTION HTML ───────────────────────────
@@ -6213,8 +6276,12 @@ const PAGE_HTML_H = `
   <div class="card">
     <div class="card-hdr">
       <div class="card-title">🕒 Historique des versions</div>
-      <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red);" onclick="viderHistorique()">🗑 Vider l'historique</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="libererEspaceUI()">🧹 Libérer de l'espace</button>
+        <button class="btn btn-outline btn-sm" style="color:var(--red);border-color:var(--red);" onclick="viderHistorique()">🗑 Vider l'historique</button>
+      </div>
     </div>
+    <div id="hist-storage" style="padding:12px 16px 0;"></div>
     <div style="padding:12px 16px;font-size:12px;color:var(--muted);">
       Chaque ligne est un instantané des données juste avant une sauvegarde (ajout, modification, suppression...).
       Restaurer une version remplace TOUTES les données actuelles par celles de cet instantané.
@@ -6236,7 +6303,22 @@ function injectDomHist(){
 }
 
 // ─────────────────────────── RENDER ───────────────────────────
+function renderStorageGauge(){
+  const el = document.getElementById('hist-storage'); if(!el) return;
+  const u = besStorageUsage(); const mo = n => (n/1048576).toFixed(2)+' Mo';
+  const col = u.pct >= 85 ? 'var(--red)' : u.pct >= 60 ? 'var(--amber)' : 'var(--green)';
+  el.innerHTML = `<div style="font-size:12px;font-weight:700;margin-bottom:5px;">💾 Mémoire du navigateur : <span style="color:${col};">${mo(u.total)} / ≈ ${mo(LS_QUOTA)} (${u.pct} %)</span></div>
+    <div style="height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;"><div style="height:100%;width:${u.pct}%;background:${col};"></div></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:5px;">Données : <b>${mo(u.data)}</b> · Historique : <b>${mo(u.hist)}</b> · Sauvegardes internes (${u.nbBackups}) : <b>${mo(u.backups)}</b> · Autres : ${mo(u.autres)}</div>`;
+}
+window.libererEspaceUI = function(){
+  if(!confirm('Libérer de l\'espace ?\n\n• Garde les 3 dernières versions de l\'historique\n• Supprime les anciennes sauvegardes internes (garde la plus récente)\n\nVos données (devis, factures, stock, chantiers…) ne sont PAS touchées.')) return;
+  const n = besLibererEspace(1);
+  notify('🧹 '+(n/1048576).toFixed(2)+' Mo libérés ✅','ok');
+  renderHistorique();
+};
 window.renderHistorique = function(){
+  renderStorageGauge();
   const hist = getHistorique();
   const tb = document.getElementById('list-historique');
   if(!tb) return;
@@ -6263,7 +6345,8 @@ window.restaurerHistorique = function(idx){
   const entry = hist[idx];
   if(!entry) return;
   if(!confirm('Restaurer cette version va REMPLACER toutes les données actuelles (devis, clients, stock...) par celles de cet instantané. Continuer ?')) return;
-  localStorage.setItem(KEY, entry.d);
+  try{ localStorage.setItem(KEY, entry.d); }
+  catch(e){ besLibererEspace(1); try{ localStorage.setItem(KEY, entry.d); }catch(e2){ alert('Mémoire pleine : impossible de restaurer. Utilisez « Libérer de l\'espace ».'); return; } }
   notify('↩️ Version restaurée — rechargement…','ok');
   setTimeout(()=>location.reload(), 600);
 };
@@ -6288,6 +6371,14 @@ window.nav = function(page, el){
 
 // ─────────────────────────── INIT ───────────────────────────
 injectDomHist();
+// Au démarrage : si la mémoire dépasse 80 %, on réduit automatiquement l'historique
+try{
+  const u0 = besStorageUsage();
+  if(u0.pct >= 80){
+    const n = besLibererEspace(1);
+    setTimeout(()=>notify('🧹 Mémoire du navigateur presque pleine ('+u0.pct+' %) — '+(n/1048576).toFixed(2)+' Mo libérés automatiquement (historique / anciennes sauvegardes)','ok'), 1200);
+  }
+}catch(e){ console.error(e); }
 
 })();
 </script>
