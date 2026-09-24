@@ -329,7 +329,9 @@ tr:last-child td{border-bottom:none;} tbody tr:hover td{background:#f8faff;}
             <option value="FACTURE">Factures</option>
             <option value="DEVIS">Devis</option>
           </select>
-          <input class="search-inp" placeholder="Rechercher N°, client…" id="flt-q-docs" oninput="renderDocs()" style="width:180px;">
+          <select id="flt-client-docs" onchange="var c=document.getElementById('flt-chantier-docs');if(c)c.value='';renderDocs()"><option value="">Tous les clients</option></select>
+          <select id="flt-chantier-docs" onchange="renderDocs()"><option value="">Tous les chantiers</option></select>
+          <input class="search-inp" placeholder="Rechercher N°, client, chantier…" id="flt-q-docs" oninput="renderDocs()" style="width:180px;">
         </div>
       </div>
       <div class="card">
@@ -712,7 +714,7 @@ tr:last-child td{border-bottom:none;} tbody tr:hover td{background:#f8faff;}
             <input type="file" id="jfile" accept=".json" style="display:none" onchange="loadJFile(this)">
           </div>
           <div style="text-align:center;padding:7px;color:var(--muted);font-size:11px;">— ou coller —</div>
-          <textarea id="json-paste" style="width:100%;height:110px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;padding:9px;outline:none;" placeholder='{"format":"bes-import-v1","documents":[...], "entrees":[...], "stock":[...]}'></textarea>
+          <textarea id="json-paste" style="width:100%;height:110px;font-family:var(--mono);font-size:11px;border:1px solid var(--border);border-radius:7px;padding:9px;outline:none;" placeholder='{"format":"bes-import-v1","documents":[...], "entrees":[...], "stock":[...]}  —  ou  {"format":"bes-valorisation-v1","client":"...","chantier":"...","lignes":[...]}'></textarea>
           <div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-primary" onclick="doImport()">✓ Importer</button>
             <button class="btn btn-outline" onclick="document.getElementById('json-paste').value=''">Effacer</button>
@@ -755,7 +757,8 @@ tr:last-child td{border-bottom:none;} tbody tr:hover td{background:#f8faff;}
   <div class="form-grid" style="margin-bottom:12px;">
     <div class="fg"><label>Type</label><select id="d-type" onchange="if(document.getElementById('doc-edit-idx').value==='-1'){document.getElementById('d-num').value=genAutoNumDoc(this.value);}"><option value="DEVIS">DEVIS</option><option value="FACTURE">FACTURE</option></select></div>
     <div class="fg"><label>N° Document</label><input type="text" id="d-num" placeholder="01-2026"></div>
-    <div class="fg"><label>Client</label><select id="d-client"></select></div>
+    <div class="fg"><label>Client</label><select id="d-client" onchange="if(window.chFillDocChantiers)chFillDocChantiers()"></select></div>
+    <div class="fg"><label>Chantier <span style="font-weight:400;">(choisir ou taper un nouveau)</span></label><input id="d-chantier" list="dl-d-chantiers" placeholder="Ex : Roma 1, Villa Amelkis 131…" autocomplete="off"><datalist id="dl-d-chantiers"></datalist></div>
     <div class="fg"><label>Date</label><input type="date" id="d-date"></div>
     <div class="fg"><label>TVA (%)</label><input type="number" id="d-tva" value="20" oninput="calcDoc()"></div>
     <div class="fg"><label>Avance (%)</label><input type="number" id="d-avance" value="0" min="0" max="100" oninput="calcDoc()"></div>
@@ -1247,6 +1250,39 @@ function defD() {
 function save() { localStorage.setItem(KEY, JSON.stringify(D)); }
 // La synchronisation cloud (vers TON projet Firebase privé, configuré dans Paramètres)
 // est branchée automatiquement par le module Trésorerie/Cloud via un monkey-patch de save().
+
+
+// ═══════════ CORRECTIF IMPRESSION (tous les documents PDF) ═══════════
+// Le pied de page légal est « position:fixed » : il se répète sur chaque page mais
+// ne réserve aucune place → les dernières lignes des tableaux passaient dessous.
+// Ce bloc, injecté dans chaque document imprimé, enveloppe le contenu dans un tableau
+// dont le <tfoot> (répété par le navigateur sur chaque page) réserve la hauteur du pied.
+const BES_PRINT_FIX = `<style>
+.pp-wrap{width:100%;border-collapse:collapse;border:none!important;margin:0!important;}
+.pp-wrap>tbody>tr>td,.pp-wrap>tfoot>tr>td{border:none!important;padding:0!important;background:transparent!important;}
+.pp-wrap>tfoot{display:table-footer-group;}
+@media screen{.pp-space{display:none;}}
+@media print{
+  thead{display:table-header-group;}
+  tr{break-inside:avoid;page-break-inside:avoid;}
+  h1,h2,h3,.sec-title{break-after:avoid;page-break-after:avoid;}
+  body{padding-bottom:0!important;}
+}
+</style>
+<script>(function(){
+  var f=document.querySelector('.legal-footer,.legal');
+  if(!f||document.querySelector('.pp-wrap'))return;
+  var h=Math.max(60,Math.ceil(f.getBoundingClientRect().height)+14);
+  var t=document.createElement('table');t.className='pp-wrap';
+  t.innerHTML='<tbody><tr><td></td></tr></tbody><tfoot><tr><td><div class="pp-space" style="height:'+h+'px"></div></td></tr></tfoot>';
+  var cell=t.querySelector('td');
+  Array.prototype.slice.call(document.body.childNodes).forEach(function(n){
+    if(n===f||n.nodeName==='SCRIPT'||n.nodeName==='STYLE')return;
+    cell.appendChild(n);
+  });
+  document.body.insertBefore(t,f);
+})();<\/script>`;
+window.BES_PRINT_FIX = BES_PRINT_FIX;
 
 // ═══════════════════════════ UTILS ═══════════════════════════
 const fmt = n => Number(n||0).toLocaleString('fr-MA',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -2003,6 +2039,7 @@ th.left{text-align:left;}
   R.C-MARRAKECH: ${p.rc||'149.327'} – T.P: ${p.tp||'47535592'} – IF: ${p.if_||'65950037'} – ICE: ${p.ice||'003485652000094'} – Tél: ${p.tel||'06.61.40.59.17'}<br>
   ${p.siege||'LOTISSEMENT AL KARAM LOT N°42, CENTRE SIDI ABDELLAH GHIATE, EL HAOUZ'} — Capital de ${p.capital||'100.000,00 dirhams'}
 </div>
+${BES_PRINT_FIX}
 <script>setTimeout(()=>window.print(),300);window.onafterprint=()=>window.close();<\/script>
 </body></html>`;
   const w=window.open('','_blank','width=850,height:1100');
@@ -2175,10 +2212,24 @@ function renderDocs() {
   fillAnneeSelect('flt-annee-docs', D.docs.map(d=>d.date));
   const q = (document.getElementById('flt-q-docs')||{}).value||'';
   const type = (document.getElementById('flt-type-docs')||{}).value||'';
+  // Filtres client / chantier
+  const selCl = document.getElementById('flt-client-docs'), selCh = document.getElementById('flt-chantier-docs');
+  const fCl = selCl ? selCl.value : '', fCh = selCh ? selCh.value : '';
+  if(selCl){
+    const cls = Array.from(new Set(D.docs.map(d=>d.clientNom).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+    selCl.innerHTML = '<option value="">Tous les clients</option>' + cls.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}" ${c===fCl?'selected':''}>${c}</option>`).join('');
+  }
+  if(selCh){
+    const chs = Array.from(new Set(D.docs.filter(d=>!fCl||d.clientNom===fCl).map(d=>d.chantierNom).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+    selCh.innerHTML = '<option value="">Tous les chantiers</option>' + chs.map(c=>`<option value="${String(c).replace(/"/g,'&quot;')}" ${c===fCh?'selected':''}>${c}</option>`).join('') + '<option value="__none__" '+(fCh==='__none__'?'selected':'')+'>— Sans chantier —</option>';
+  }
   const list = D.docs.filter(d => {
     if(!matchMoisFilter(d.date,'flt-mois-docs','flt-annee-docs')) return false;
     if(type && d.type!==type) return false;
-    if(q && !d.num.toLowerCase().includes(q.toLowerCase()) && !d.clientNom.toLowerCase().includes(q.toLowerCase())) return false;
+    if(fCl && d.clientNom!==fCl) return false;
+    if(fCh==='__none__' && d.chantierNom) return false;
+    if(fCh && fCh!=='__none__' && d.chantierNom!==fCh) return false;
+    if(q && !d.num.toLowerCase().includes(q.toLowerCase()) && !(d.clientNom||'').toLowerCase().includes(q.toLowerCase()) && !(d.chantierNom||'').toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
   const tb = document.getElementById('list-docs');
@@ -2188,7 +2239,7 @@ function renderDocs() {
     return `<tr>
       <td><strong style="font-family:var(--mono);">${d.num}</strong></td>
       <td><span class="bes-badge">${d.type}</span></td>
-      <td>${d.clientNom}</td><td>${d.date||'-'}</td>
+      <td>${d.clientNom}${d.chantierNom?`<div style="font-size:10.5px;color:var(--bes);font-weight:600;">🏗️ ${d.chantierNom}</div>`:''}</td><td>${d.date||'-'}</td>
       <td style="font-family:var(--mono);">${fmt(d.ht)}</td>
       <td style="font-family:var(--mono);font-weight:700;">${fmt(d.ttc)}</td>
       <td><span class="status ${stC[d.statut]||'s-b'}">${stL[d.statut]||'-'}</span></td>
@@ -3094,6 +3145,7 @@ ${infosBlocHTML}
   ${p.siege||'LOTISSEMENT AL KARAM LOT N°42, CENTRE SIDI ABDELLAH GHIATE, EL HAOUZ'} — Capital de ${p.capital||'100.000,00 dirhams'}
 </div>
 
+${BES_PRINT_FIX}
 <script>setTimeout(()=>window.print(),300);window.onafterprint=()=>window.close();<\/script>
 </body></html>`;
 
@@ -4290,6 +4342,7 @@ function buildBesJson(doc) {
     documents:[{
       docType:doc.type,num:doc.num,date:doc.date,
       cN:doc.clientNom,cA:doc.clientAdresse||'',cI:doc.clientIce||'',
+      ch:doc.chantierNom||'',
       tvaV:doc.tva,aPct:doc.avancePct||0,
       items:(doc.items||[]).map(r=>({des:r.des,dim:r.dim||'',unite:r.unite||'u',q:r.q,pu:r.pu})),
       ht:doc.ht,ttc:doc.ttc,savedAt:new Date().toISOString()
@@ -4572,7 +4625,7 @@ function doImport() {
         const qEff=Math.round(uu*qq*1000)/1000;
         return {des:r.des,dim:r.dim||'',unite:r.unite||'u',q:qEff,pu:r.pu};
       }),
-      ht,tva,ttc,avancePct:d.aPct||0,notes:''});
+      ht,tva,ttc,avancePct:d.aPct||0,notes:'',chantierNom:d.ch||d.chantier||''});
     imported++;
     // Classer le document selon sa nature
     const dt=(d.docType||'').toUpperCase();
@@ -5038,6 +5091,7 @@ async function exportWord(i) {
       P([T(`Date : ${doc.date||'-'}`,18,'444444')],AlignmentType.RIGHT,{after:40}),
       P([T(`Client : ${doc.clientNom||''}`,18,'000000',true)],AlignmentType.RIGHT,{after:40}),
       doc.clientIce?P([T(`ICE : ${doc.clientIce}`,16,'666666')],AlignmentType.RIGHT,{after:40}):P([T('')]),
+      ...(doc.chantierNom?[P([T(`Chantier : ${doc.chantierNom}`,16,'000000',true)],AlignmentType.RIGHT,{after:40})]:[]),
       P([T(stL[doc.statut]||'',18,doc.statut==='payee'?'1E8449':doc.statut==='retard'?'9C0006':'1F497D',true)],AlignmentType.RIGHT,{after:0}),
     ],borders:nbs,width:{size:4600,type:WidthType.DXA},shading:{fill:WH,type:ShadingType.CLEAR}}),
   ]})]});
@@ -5296,6 +5350,7 @@ function exportPDF(i) {
   <div class="client-line"><strong>CLIENT :</strong> ${doc.clientNom||''}</div>
   ${doc.clientAdresse?`<div class="client-line"><strong>ADRESSE :</strong> ${doc.clientAdresse}</div>`:''}
   ${doc.clientIce?`<div class="client-line"><strong>ICE :</strong> ${doc.clientIce}</div>`:''}
+  ${doc.chantierNom?`<div class="client-line"><strong>CHANTIER :</strong> ${doc.chantierNom}</div>`:''}
 </div>
 
 <hr class="sep">
@@ -5366,6 +5421,7 @@ function exportPDF(i) {
   Capital de ${p.capital||'100.000,00 dirhams'}
 </div>
 
+${BES_PRINT_FIX}
 <script>
 // Masquer URL et métadonnées d'impression
 window.onload = function() {
@@ -6234,6 +6290,1700 @@ window.nav = function(page, el){
 injectDomHist();
 
 })();
+</script>
+<script>
+/* ════════════════════════════════════════════════════════════════
+   MODULE CHANTIERS — Suivi & situation des projets — BES FacturePro
+   ────────────────────────────────────────────────────────────────
+   AJOUTE (sans modifier le code existant) :
+     • Client (personne / société) → chantiers → devis liés
+     • Montant accordé par devis, base HT ou TTC (modifiable si remise)
+     • Validation du devis → suivi de livraison produit par produit
+     • Bons de livraison (BL) + impression des seuls produits livrés
+     • Avances / reste à payer par devis et par chantier
+       (les avances sont des encaissements → visibles en Trésorerie)
+     • Factures liées à chaque devis (conversion, facture depuis BL,
+       liaison manuelle) + autres documents (sorties de stock)
+   Données : D.chantiers (synchronisé avec le cloud comme le reste de D)
+   ════════════════════════════════════════════════════════════════ */
+(function(){
+
+// ─────────────────────────── HELPERS ───────────────────────────
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const chs = () => (D.chantiers || (D.chantiers = []));
+const encs = () => (D.encaissements || (D.encaissements = []));
+const docById = id => (D.docs||[]).find(d => d.id === id);
+const chById = id => chs().find(c => c.id === id);
+const clientOf = nom => (D.clients||[]).find(c => c.nom === nom);
+const typeClient = nom => { const c = clientOf(nom); return c ? (c.type||'entreprise') : 'entreprise'; };
+const typeLbl = t => t === 'particulier' ? '👤 Personne' : '🏢 Société';
+const dFr = s => s ? new Date(s).toLocaleDateString('fr-FR') : '-';
+const r2 = n => Math.round((Number(n)||0)*100)/100;
+
+const CH_STATUTS = {
+  en_cours:  {l:'En cours',  c:'s-e'},
+  attente:   {l:'En attente',c:'s-b'},
+  termine:   {l:'Terminé',   c:'s-p'},
+  suspendu:  {l:'Suspendu',  c:'s-r'}
+};
+const ETATS = {
+  attente:     {l:'⏳ En attente',     bg:'#f1f5f9', fg:'#64748b'},
+  fabrication: {l:'🔨 En fabrication', bg:'#fef3c7', fg:'#92400e'},
+  pret:        {l:'📦 Prêt à livrer',  bg:'#CFE2F3', fg:'#2E5A8E'}
+};
+
+function normCh(ch){
+  if(!ch.devis) ch.devis = [];
+  if(!ch.factures) ch.factures = [];
+  if(!ch.livraisons) ch.livraisons = [];
+  if(!ch.etats) ch.etats = {};
+  if(!ch.couts) ch.couts = [];
+  if(ch.inclSorties === undefined) ch.inclSorties = true;
+  return ch;
+}
+
+// Montant accordé d'un devis lié (base HT ou TTC, ou montant négocié saisi)
+function accorde(link){
+  const doc = docById(link.docId);
+  if(link.montant !== null && link.montant !== undefined && link.montant !== '') return Number(link.montant)||0;
+  if(!doc) return 0;
+  return link.base === 'HT' ? (doc.ht||0) : (doc.ttc||0);
+}
+function autoMontant(link){
+  const doc = docById(link.docId);
+  if(!doc) return 0;
+  return link.base === 'HT' ? (doc.ht||0) : (doc.ttc||0);
+}
+
+// Factures liées à un devis : converties depuis le devis, créées depuis un BL, ou liées à la main
+function facturesOfDevis(ch, doc){
+  if(!doc) return [];
+  const manual = ch.factures.filter(f => f.devisId === doc.id).map(f => f.docId);
+  return (D.docs||[]).filter(f => f.type === 'FACTURE' && (
+    manual.includes(f.id) ||
+    (f.convertedFrom && f.clientNom === doc.clientNom &&
+      String(f.convertedFrom).split(/\s*,\s*/).includes(doc.num))
+  ));
+}
+function allFactures(ch){
+  const set = new Map();
+  ch.devis.forEach(l => facturesOfDevis(ch, docById(l.docId)).forEach(f => set.set(f.id, f)));
+  ch.factures.forEach(fl => { const f = docById(fl.docId); if(f) set.set(f.id, f); });
+  return Array.from(set.values());
+}
+function paiements(ch){
+  const ids = new Set(ch.devis.map(l => l.docId));
+  allFactures(ch).forEach(f => ids.add(f.id));
+  return encs().filter(e => e.chantierId === ch.id || (e.docId != null && ids.has(e.docId)));
+}
+function paiementsDevis(ch, devisId){
+  const doc = docById(devisId);
+  const ids = new Set([devisId]);
+  facturesOfDevis(ch, doc).forEach(f => ids.add(f.id));
+  return paiements(ch).filter(e => e.docId != null && ids.has(e.docId));
+}
+
+// Livraison
+const keyIt = (docId, idx) => docId + '_' + idx;
+function qteLivree(ch, docId, idx){
+  return ch.livraisons.reduce((s, bl) => s + (bl.lignes||[])
+    .filter(l => l.docId === docId && l.idx === idx)
+    .reduce((a, l) => a + (Number(l.q)||0), 0), 0);
+}
+function lignesAValider(ch){ // tous les produits des devis validés
+  const out = [];
+  ch.devis.filter(l => l.valide).forEach(l => {
+    const doc = docById(l.docId);
+    if(!doc) return;
+    (doc.items||[]).forEach((it, idx) => {
+      const q = Number(it.q)||0;
+      if(q <= 0 && !(it.des||'').trim()) return;
+      const liv = qteLivree(ch, doc.id, idx);
+      out.push({doc, idx, it, q, liv, reste: Math.max(0, r2(q - liv))});
+    });
+  });
+  return out;
+}
+function etatLigne(ch, L){
+  if(L.q > 0 && L.liv >= L.q - 1e-9) return {k:'livre', l:'✅ Livré', bg:'#dcfce7', fg:'#065f46'};
+  if(L.liv > 0) return {k:'partiel', l:'🚚 Livré partiel', bg:'#ede9fe', fg:'#5b21b6'};
+  const e = ch.etats[keyIt(L.doc.id, L.idx)] || 'attente';
+  return Object.assign({k:e}, ETATS[e] || ETATS.attente);
+}
+
+function situation(ch){
+  normCh(ch);
+  const valides = ch.devis.filter(l => l.valide);
+  const accTot = valides.reduce((s, l) => s + accorde(l), 0);
+  const enAttente = ch.devis.filter(l => !l.valide).reduce((s, l) => s + accorde(l), 0);
+  const paye = paiements(ch).reduce((s, e) => s + (Number(e.montant)||0), 0);
+  const lignes = lignesAValider(ch);
+  const nbLiv = lignes.filter(L => L.q > 0 && L.liv >= L.q - 1e-9).length;
+  const nbTot = lignes.filter(L => L.q > 0).length;
+  const facture = allFactures(ch).reduce((s, f) => s + (f.ttc||0), 0);
+  return {accTot, enAttente, paye, reste: r2(accTot - paye), nbLiv, nbTot,
+          pctLiv: nbTot ? Math.round(nbLiv*100/nbTot) : 0, facture, nbValides: valides.length};
+}
+
+function genNumBL(){
+  const an = new Date().getFullYear();
+  const re = new RegExp('^BL-(\\d+)-' + an + '$');
+  let max = 0;
+  chs().forEach(ch => (ch.livraisons||[]).forEach(bl => { const m = re.exec(bl.num||''); if(m) max = Math.max(max, +m[1]); }));
+  return 'BL-' + String(max+1).padStart(2,'0') + '-' + an;
+}
+
+function refreshAll(){
+  if(typeof renderDashboard === 'function') try{ renderDashboard(); }catch(e){}
+  if(typeof renderDocs === 'function') try{ renderDocs(); }catch(e){}
+  if(typeof renderTresorerie === 'function' && document.getElementById('tr-stats')) try{ renderTresorerie(); }catch(e){}
+}
+
+// ─────────────────────────── INJECTION HTML ───────────────────────────
+const CSS = `
+<style>
+.ch-grp{border-bottom:1px solid var(--border);}
+.ch-grp-hdr{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 16px;background:#f8fafc;cursor:pointer;flex-wrap:wrap;}
+.ch-grp-hdr:hover{background:#eef4fb;}
+.ch-grp-name{font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;}
+.ch-grp-tot{display:flex;gap:16px;font-size:11px;color:var(--muted);font-family:var(--mono);flex-wrap:wrap;}
+.ch-grp-tot b{color:var(--txt);}
+.ch-prog{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;min-width:70px;}
+.ch-prog > div{height:100%;background:var(--green);}
+.ch-pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;white-space:nowrap;}
+.ch-back{cursor:pointer;color:var(--bes);font-weight:600;font-size:12px;margin-bottom:10px;display:inline-block;}
+.ch-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;}
+.ch-head h2{font-size:17px;margin-bottom:4px;}
+.ch-meta{font-size:12px;color:var(--muted);line-height:1.7;}
+.ch-num{font-family:var(--mono);}
+.ch-green{color:var(--green);} .ch-red{color:var(--red);} .ch-amber{color:var(--amber);}
+.ch-devis-card{border:1px solid var(--border);border-radius:8px;margin:12px 16px;overflow:hidden;}
+.ch-devis-top{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:#f8fafc;flex-wrap:wrap;}
+.ch-devis-body{padding:10px 12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;}
+.ch-devis-body label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:3px;}
+.ch-devis-body input,.ch-devis-body select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;width:100%;font-family:var(--font);min-height:32px;}
+.ch-kv{font-family:var(--mono);font-weight:700;font-size:13px;}
+.ch-fac-list{padding:0 12px 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px;}
+.ch-fac-chip{background:#ede9fe;color:#5b21b6;border-radius:5px;padding:3px 8px;font-weight:600;display:inline-flex;gap:6px;align-items:center;}
+.ch-fac-chip button{background:none;border:none;cursor:pointer;font-size:11px;padding:0;}
+.ch-gtbl{table-layout:fixed;}
+@media (max-width:768px){.ch-gtbl{table-layout:auto;}}
+.ch-empty{padding:22px;text-align:center;color:var(--muted);}
+.ch-etat-sel{border:none;border-radius:20px;padding:3px 8px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--font);}
+.ch-sum-box{padding:12px 16px;display:grid;grid-template-columns:1fr auto;gap:4px 24px;font-size:12px;max-width:460px;margin-left:auto;}
+.ch-sum-box .v{text-align:right;font-family:var(--mono);font-weight:700;}
+@media (max-width:1100px){ .ch-cout-form{grid-template-columns:1fr 1fr !important;} .ch-cout-form #cc-des{grid-column:1/-1;} }
+@media (max-width:768px){ .ch-devis-card{margin:10px;} .ch-grp-tot{gap:10px;} }
+</style>`;
+
+const NAV_ITEM = '<div class="nav-item" onclick="nav(\'chantiers\',this)">🏗️ Chantiers &amp; Suivi</div>';
+
+const PAGE = `
+<div class="page" id="pg-chantiers">
+  <div id="ch-list-view">
+    <div class="stats-grid" id="ch-stats" style="grid-template-columns:repeat(5,1fr);"></div>
+    <div class="card">
+      <div class="card-hdr">
+        <div class="card-title" id="ch-list-title">Chantiers par client</div>
+        <div class="mois-filter">
+          <select id="ch-f-client" onchange="renderChantiers()" style="max-width:300px;font-weight:600;"><option value="">👥 Tous les clients</option></select>
+          <input class="search-inp" id="ch-q" placeholder="🔍 Chantier, N° devis…" oninput="renderChantiers()" style="min-width:190px;">
+          <select id="ch-f-type" onchange="renderChantiers()">
+            <option value="">Personnes &amp; sociétés</option>
+            <option value="particulier">👤 Personnes</option>
+            <option value="entreprise">🏢 Sociétés</option>
+          </select>
+          <select id="ch-f-statut" onchange="renderChantiers()">
+            <option value="">Tous statuts</option>
+            <option value="en_cours">En cours</option>
+            <option value="attente">En attente</option>
+            <option value="termine">Terminé</option>
+            <option value="suspendu">Suspendu</option>
+          </select>
+          <select id="ch-f-situ" onchange="renderChantiers()">
+            <option value="">Toutes situations</option>
+            <option value="reste">Avec reste à payer</option>
+            <option value="livrer">Avec produits à livrer</option>
+            <option value="solde">Soldés</option>
+          </select>
+        </div>
+      </div>
+      <div id="ch-list"></div>
+    </div>
+  </div>
+  <div id="ch-detail-view" style="display:none;"></div>
+</div>`;
+
+const MODALS = `
+<!-- Chantier -->
+<div class="modal-overlay" id="modal-chantier">
+<div class="modal modal-sm">
+  <div class="modal-hdr"><div class="modal-title" id="chm-title">Nouveau chantier</div><button class="modal-close" onclick="closeModal('modal-chantier')">&times;</button></div>
+  <input type="hidden" id="chm-id" value="">
+  <div class="form-grid">
+    <div class="fg full"><label>Client (personne ou société) *</label>
+      <input id="chm-client" list="chm-dl-clients" placeholder="Choisir ou taper un nouveau nom…" autocomplete="off" oninput="chOnClientInput()">
+      <datalist id="chm-dl-clients"></datalist>
+    </div>
+    <div class="fg" id="chm-type-wrap"><label>Type de client</label>
+      <select id="chm-type"><option value="particulier">👤 Personne</option><option value="entreprise">🏢 Société</option></select>
+    </div>
+    <div class="fg"><label>Statut</label>
+      <select id="chm-statut"><option value="en_cours">En cours</option><option value="attente">En attente</option><option value="termine">Terminé</option><option value="suspendu">Suspendu</option></select>
+    </div>
+    <div class="fg full"><label>Nom du chantier *</label><input id="chm-nom" placeholder="Ex : Villa Tariq — Dressings &amp; portes"></div>
+    <div class="fg full"><label>Adresse / lieu</label><input id="chm-adresse" placeholder="Ex : Route de l'Ourika km 12"></div>
+    <div class="fg"><label>Date de début</label><input type="date" id="chm-date"></div>
+    <div class="fg"><label>Téléphone contact</label><input id="chm-tel" placeholder="06…"></div>
+    <div class="fg full"><label>Notes</label><textarea id="chm-notes" placeholder="Remarques…"></textarea></div>
+  </div>
+  <div id="chm-info" style="font-size:11px;color:var(--muted);margin-top:8px;"></div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" onclick="closeModal('modal-chantier')">Annuler</button>
+    <button class="btn btn-primary" onclick="chSave()">💾 Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- Lier un devis / une facture -->
+<div class="modal-overlay" id="modal-ch-link">
+<div class="modal modal-sm">
+  <div class="modal-hdr"><div class="modal-title" id="chl-title">Lier un devis</div><button class="modal-close" onclick="closeModal('modal-ch-link')">&times;</button></div>
+  <input type="hidden" id="chl-kind" value="DEVIS">
+  <div class="form-grid">
+    <div class="fg full"><label id="chl-lbl">Devis</label><select id="chl-doc"></select></div>
+    <div class="fg full"><label><input type="checkbox" id="chl-all" onchange="chFillLinkSelect()" style="width:auto;min-height:0;margin-right:6px;">Afficher aussi les documents des autres clients</label></div>
+    <div class="fg full" id="chl-devis-wrap"><label>Rattacher cette facture au devis</label><select id="chl-devis"></select></div>
+    <div class="fg" id="chl-base-wrap"><label>Montant accordé sur base</label><select id="chl-base"><option value="TTC">TTC</option><option value="HT">HT</option></select></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" onclick="closeModal('modal-ch-link')">Annuler</button>
+    <button class="btn btn-primary" onclick="chSaveLink()">🔗 Lier</button>
+  </div>
+</div></div>
+
+<!-- Livraison -->
+<div class="modal-overlay" id="modal-ch-liv">
+<div class="modal">
+  <div class="modal-hdr"><div class="modal-title">🚚 Nouvelle livraison</div><button class="modal-close" onclick="closeModal('modal-ch-liv')">&times;</button></div>
+  <div class="form-grid" style="grid-template-columns:1fr 1fr 2fr;">
+    <div class="fg"><label>N° BL</label><input id="chv-num"></div>
+    <div class="fg"><label>Date livraison *</label><input type="date" id="chv-date"></div>
+    <div class="fg"><label>Note (livreur, véhicule…)</label><input id="chv-note"></div>
+  </div>
+  <div style="margin:12px 0 6px;display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-outline btn-sm" onclick="chLivToutCocher(true)">☑ Tout livrer (reste)</button>
+    <button class="btn btn-outline btn-sm" onclick="chLivToutCocher(false)">☐ Tout décocher</button>
+  </div>
+  <div style="overflow-x:auto;">
+  <table class="bes-tbl">
+    <thead><tr><th style="width:30px;"></th><th>Devis</th><th class="tl">Désignation</th><th>Dimensions</th><th>Unité</th><th>Commandé</th><th>Déjà livré</th><th>Qté livrée maintenant</th></tr></thead>
+    <tbody id="chv-rows"></tbody>
+  </table>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" onclick="closeModal('modal-ch-liv')">Annuler</button>
+    <button class="btn btn-outline" onclick="chSaveLivraison(true)">💾 + 🖨 Imprimer BL</button>
+    <button class="btn btn-green" onclick="chSaveLivraison(false)">💾 Enregistrer la livraison</button>
+  </div>
+</div></div>
+
+<!-- Avance -->
+<div class="modal-overlay" id="modal-ch-av">
+<div class="modal modal-sm">
+  <div class="modal-hdr"><div class="modal-title" id="cha-title">Nouvelle avance / paiement</div><button class="modal-close" onclick="closeModal('modal-ch-av')">&times;</button></div>
+  <input type="hidden" id="cha-id" value="">
+  <div class="form-grid">
+    <div class="fg"><label>Date *</label><input type="date" id="cha-date"></div>
+    <div class="fg"><label>Montant (MAD) *</label><input type="number" id="cha-montant" step="0.01" min="0"></div>
+    <div class="fg full"><label>Imputer sur</label><select id="cha-devis" onchange="chAvInfo()"></select></div>
+    <div class="fg"><label>Mode</label><select id="cha-mode"><option>Espèces</option><option>Chèque</option><option>Virement</option><option>LCN</option></select></div>
+    <div class="fg"><label>Réf. paiement</label><input id="cha-ref" placeholder="N° chèque / virement…"></div>
+    <div class="fg full"><label>Note</label><input id="cha-note" placeholder="Ex : Avance 50% à la commande"></div>
+  </div>
+  <div id="cha-info" style="font-size:11px;color:var(--muted);margin-top:8px;"></div>
+  <div style="font-size:10.5px;color:var(--muted);margin-top:6px;">💡 L'avance est aussi enregistrée dans Trésorerie → Encaissements.</div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" onclick="closeModal('modal-ch-av')">Annuler</button>
+    <button class="btn btn-green" onclick="chSaveAvance()">💾 Enregistrer</button>
+  </div>
+</div></div>
+
+<!-- Impression produits livrés -->
+<div class="modal-overlay" id="modal-ch-print">
+<div class="modal modal-sm">
+  <div class="modal-hdr"><div class="modal-title">🖨 Imprimer les produits livrés</div><button class="modal-close" onclick="closeModal('modal-ch-print')">&times;</button></div>
+  <div class="form-grid">
+    <div class="fg full"><label>Contenu</label><select id="chp-scope"></select></div>
+    <div class="fg full"><label><input type="checkbox" id="chp-prix" style="width:auto;min-height:0;margin-right:6px;">Afficher les prix (P.U, total, TVA)</label></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-outline" onclick="closeModal('modal-ch-print')">Annuler</button>
+    <button class="btn btn-primary" onclick="chDoPrintLivres()">🖨 Imprimer</button>
+  </div>
+</div></div>
+`;
+
+function injectDomCh(){
+  document.head.insertAdjacentHTML('beforeend', CSS);
+  const facItem = Array.from(document.querySelectorAll('.nav-item')).find(el => (el.getAttribute('onclick')||'').includes("nav('factures'"));
+  if(facItem) facItem.insertAdjacentHTML('afterend', NAV_ITEM);
+  const content = document.querySelector('.content');
+  if(content) content.insertAdjacentHTML('beforeend', PAGE);
+  document.body.insertAdjacentHTML('beforeend', MODALS);
+  ['modal-chantier','modal-ch-link','modal-ch-liv','modal-ch-av','modal-ch-print'].forEach(id => {
+    const m = document.getElementById(id);
+    if(m) m.addEventListener('click', e => { if(e.target === m) m.classList.remove('open'); });
+  });
+}
+
+// ─────────────────────────── NAVIGATION ───────────────────────────
+let curChId = null;
+let curTab = 'devis';
+const _navPrev = window.nav;
+window.nav = function(page, el){
+  _navPrev(page, el);
+  if(page === 'chantiers'){
+    document.getElementById('ptitle').textContent = 'Chantiers & Suivi';
+    curChId = null;
+    showList();
+  }
+};
+function setTopbar(detail){
+  const tb = document.getElementById('tbar');
+  tb.innerHTML = '';
+  const mkB = (txt, cls, fn) => { const b = document.createElement('button'); b.className = 'btn btn-'+cls+' btn-sm'; b.textContent = txt; b.onclick = fn; tb.appendChild(b); };
+  if(detail){
+    mkB('🖨 Situation client', 'outline', () => chPrintSituation(curChId));
+    mkB('🔒 Situation admin', 'outline', () => chPrintSituationAdmin(curChId));
+    mkB('💰 Avance', 'green', () => chOpenAvance(curChId, null));
+    mkB('🚚 Livraison', 'amber', () => chOpenLivraison(curChId));
+  } else {
+    mkB('+ Nouveau chantier', 'primary', () => chOpenModal(null));
+  }
+}
+function showList(){
+  document.getElementById('ch-list-view').style.display = 'block';
+  document.getElementById('ch-detail-view').style.display = 'none';
+  setTopbar(false);
+  renderChantiers();
+}
+window.chOpenDetail = function(id, tab){
+  curChId = id;
+  if(tab) curTab = tab;
+  document.getElementById('ch-list-view').style.display = 'none';
+  document.getElementById('ch-detail-view').style.display = 'block';
+  setTopbar(true);
+  renderDetail();
+  const c = document.querySelector('.content'); if(c) c.scrollTop = 0;
+};
+window.chBack = function(){ curChId = null; showList(); };
+
+// ─────────────────────────── LISTE ───────────────────────────
+window.renderChantiers = function(){
+  if(chSyncFromDocs()) save();
+  const all = chs().map(normCh);
+  // Liste des clients ayant des chantiers
+  const selCl = document.getElementById('ch-f-client');
+  const fCl = selCl.value;
+  const clNames = Array.from(new Set(all.map(c => c.clientNom).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  selCl.innerHTML = '<option value="">👥 Tous les clients ('+clNames.length+')</option>' + clNames.map(n => {
+    const nb = all.filter(c => c.clientNom === n).length;
+    return `<option value="${esc(n)}" ${n===fCl?'selected':''}>${esc(n)} (${nb} chantier${nb>1?'s':''})</option>`;
+  }).join('');
+  if(fCl && !clNames.includes(fCl)) selCl.value = '';
+  const scope = all.filter(ch => !selCl.value || ch.clientNom === selCl.value);
+  // Stats (du client filtré, ou globales)
+  let acc = 0, paye = 0, reste = 0, aLivrer = 0, enCours = 0;
+  scope.forEach(ch => {
+    const s = situation(ch);
+    acc += s.accTot; paye += s.paye; reste += Math.max(0, s.reste);
+    aLivrer += (s.nbTot - s.nbLiv);
+    if(ch.statut === 'en_cours') enCours++;
+  });
+  document.getElementById('ch-stats').innerHTML = [
+    ['Chantiers en cours', enCours, 'bb', 'blue', 'sur '+scope.length],
+    ['Montant accordé', fmt(acc), 'bb', 'blue', 'MAD'],
+    ['Avances encaissées', fmt(paye), 'bg', 'green', 'MAD'],
+    ['Reste à payer', fmt(reste), 'br', 'red', 'MAD'],
+    ['Produits à livrer', aLivrer, 'ba', 'amber', 'lignes'],
+  ].map(([l, v, bc, cc, u]) => `<div class="stat-card ${cc}"><div class="stat-label">${l}</div><div class="stat-value" style="font-size:16px;">${v}</div><span class="badge ${bc}">${u}</span></div>`).join('');
+
+  document.getElementById('ch-list-title').innerHTML = selCl.value
+    ? `Chantiers de <span style="color:var(--bes);">${esc(selCl.value)}</span> <button class="btn btn-outline btn-sm" style="margin-left:8px;" onclick="chPrintSituationClient(document.getElementById('ch-f-client').value)">🖨 Situation client</button> <button class="btn btn-outline btn-sm" onclick="chPrintSituationAdminClient(document.getElementById('ch-f-client').value)">🔒 Situation admin</button> <button class="btn btn-primary btn-sm" onclick="chNewForClient(document.getElementById('ch-f-client').value)">+ Chantier</button>`
+    : 'Chantiers par client';
+  const q = (document.getElementById('ch-q').value||'').toLowerCase().trim();
+  const fType = document.getElementById('ch-f-type').value;
+  const fSt = document.getElementById('ch-f-statut').value;
+  const fSi = document.getElementById('ch-f-situ').value;
+  const list = scope.filter(ch => {
+    if(fType && typeClient(ch.clientNom) !== fType) return false;
+    if(fSt && ch.statut !== fSt) return false;
+    const s = situation(ch);
+    if(fSi === 'reste' && !(s.reste > 0.01)) return false;
+    if(fSi === 'livrer' && !(s.nbTot - s.nbLiv > 0)) return false;
+    if(fSi === 'solde' && !(s.accTot > 0 && s.reste <= 0.01)) return false;
+    if(q){
+      const hay = [ch.clientNom, ch.nom, ch.adresse].concat(ch.devis.map(l => (docById(l.docId)||{}).num)).join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const box = document.getElementById('ch-list');
+  if(!list.length){
+    box.innerHTML = `<div class="ch-empty">${all.length ? 'Aucun chantier ne correspond aux filtres.' : 'Aucun chantier pour l\'instant.<br><br><button class="btn btn-primary btn-sm" onclick="chOpenModal(null)">+ Créer le premier chantier</button><br><br><span style="font-size:11px;">Astuce : vous pouvez aussi créer les chantiers automatiquement depuis vos devis existants.</span><br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="chAutoFromDevis()">⚡ Créer un chantier par devis existant</button>'}</div>`;
+    return;
+  }
+  // Groupement par client
+  const groups = {};
+  list.forEach(ch => { (groups[ch.clientNom||'—'] = groups[ch.clientNom||'—'] || []).push(ch); });
+  const gKeys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  window._chGrpKeys = gKeys;
+  box.innerHTML = gKeys.map((cn, gi) => {
+    const arr = groups[cn].sort((a, b) => (a.nom||'').localeCompare(b.nom||'', 'fr', {numeric: true}));
+    const t = typeClient(cn);
+    let gA = 0, gP = 0, gR = 0;
+    arr.forEach(ch => { const s = situation(ch); gA += s.accTot; gP += s.paye; gR += s.reste; });
+    const rows = arr.map(ch => {
+      const s = situation(ch);
+      const st = CH_STATUTS[ch.statut] || CH_STATUTS.en_cours;
+      const devisNums = ch.devis.map(l => { const d = docById(l.docId); return d ? `<span class="ch-num" style="font-size:11px;">${esc(d.num)}${l.valide?' ✔':''}</span>` : ''; }).join(', ') || '<span style="color:var(--muted);">—</span>';
+      return `<tr style="cursor:pointer;" onclick="chOpenDetail(${ch.id})">
+        <td><strong>${esc(ch.nom)}</strong>${ch.adresse?`<div style="font-size:10.5px;color:var(--muted);">📍 ${esc(ch.adresse)}</div>`:''}</td>
+        <td>${devisNums}</td>
+        <td class="ch-num">${fmt(s.accTot)}${s.enAttente>0?`<div style="font-size:10px;color:var(--muted);">+ ${fmt(s.enAttente)} non validé</div>`:''}</td>
+        <td class="ch-num ch-green">${fmt(s.paye)}</td>
+        <td class="ch-num ${s.reste>0.01?'ch-red':'ch-green'}" style="font-weight:700;">${fmt(s.reste)}</td>
+        <td style="min-width:110px;">${s.nbTot?`<div style="font-size:10.5px;margin-bottom:3px;">${s.nbLiv}/${s.nbTot} livrés</div><div class="ch-prog"><div style="width:${s.pctLiv}%;"></div></div>`:'<span style="font-size:10.5px;color:var(--muted);">Aucun devis validé</span>'}</td>
+        <td><span class="status ${st.c}">${st.l}</span></td>
+        <td style="white-space:nowrap;" onclick="event.stopPropagation();">
+          <button class="btn-ghost" onclick="chOpenDetail(${ch.id})">Ouvrir</button>
+          <button class="btn-icon" onclick="chOpenModal(${ch.id})" title="Modifier">✏️</button>
+          <button class="btn-icon" style="color:var(--red);" onclick="chDelete(${ch.id})" title="Supprimer">🗑</button>
+        </td></tr>`;
+    }).join('');
+    return `<div class="ch-grp">
+      <div class="ch-grp-hdr" onclick="chFilterClient(_chGrpKeys[${gi}])" title="Voir uniquement les chantiers de ce client">
+        <div class="ch-grp-name">${esc(cn)} <span class="ch-pill" style="background:${t==='particulier'?'#fef3c7;color:#92400e':'#CFE2F3;color:#2E5A8E'};">${typeLbl(t)}</span><span style="font-size:11px;color:var(--muted);font-weight:500;">${arr.length} chantier${arr.length>1?'s':''}</span></div>
+        <div class="ch-grp-tot"><span>Accordé <b>${fmt(gA)}</b></span><span>Payé <b class="ch-green">${fmt(gP)}</b></span><span>Reste <b class="${gR>0.01?'ch-red':'ch-green'}">${fmt(gR)}</b></span><span style="color:var(--bes);cursor:pointer;" onclick="event.stopPropagation();chNewForClient(_chGrpKeys[${gi}])">＋ chantier</span></div>
+      </div>
+      <table class="ch-gtbl"><colgroup><col style="width:22%"><col style="width:14%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:8%"><col style="width:9%"></colgroup><thead><tr><th>Chantier</th><th>Devis (✔ validé)</th><th>Accordé</th><th>Avances</th><th>Reste à payer</th><th>Livraison</th><th>Statut</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  }).join('');
+};
+
+window.chFilterClient = function(nom){
+  const sel = document.getElementById('ch-f-client');
+  sel.value = sel.value === nom ? '' : nom;
+  renderChantiers();
+};
+// Création rapide : un chantier par devis existant non encore rattaché
+window.chAutoFromDevis = function(){
+  const linked = new Set(); chs().forEach(ch => (ch.devis||[]).forEach(l => linked.add(l.docId)));
+  const devis = (D.docs||[]).filter(d => d.type === 'DEVIS' && !linked.has(d.id));
+  if(!devis.length){ notify('Aucun devis à rattacher', 'err'); return; }
+  if(!confirm(`Créer ${devis.length} chantier(s) — un par devis existant non rattaché ?\n(Vous pourrez ensuite renommer / regrouper.)`)) return;
+  devis.slice().reverse().forEach((d, i) => {
+    chs().push({id: Date.now()+i, nom: 'Chantier ' + (d.clientNom||'') + ' — ' + d.num, clientNom: d.clientNom||'', adresse: d.clientAdresse||'',
+      dateDebut: d.date||today(), statut: 'en_cours', tel: '', notes: '',
+      devis: [{docId: d.id, valide: d.statut === 'payee', dateValidation: '', base: 'TTC', montant: null}], factures: [], livraisons: [], etats: {}});
+  });
+  save(); notify(devis.length + ' chantier(s) créé(s) ✅', 'ok'); renderChantiers();
+};
+
+// ─────────────────────────── CRUD CHANTIER ───────────────────────────
+window.chOnClientInput = function(){
+  const v = document.getElementById('chm-client').value.trim();
+  const c = clientOf(v);
+  const info = document.getElementById('chm-info');
+  if(c){ document.getElementById('chm-type').value = c.type||'entreprise'; info.textContent = 'Client existant' + (c.tel?' — Tél : '+c.tel:'') + (c.ville?' — '+c.ville:''); if(!document.getElementById('chm-tel').value && c.tel) document.getElementById('chm-tel').value = c.tel; }
+  else info.textContent = v ? '➕ Nouveau client : il sera ajouté dans Clients.' : '';
+};
+window.chNewForClient = function(nom){ chOpenModal(null, nom); };
+window.chOpenModal = function(id, presetClient){
+  document.getElementById('chm-dl-clients').innerHTML = (D.clients||[]).map(c => `<option value="${esc(c.nom)}">`).join('');
+  document.getElementById('chm-id').value = id || '';
+  document.getElementById('chm-title').textContent = id ? 'Modifier le chantier' : 'Nouveau chantier';
+  const ch = id ? chById(id) : null;
+  document.getElementById('chm-client').value = ch ? ch.clientNom : (presetClient||'');
+  document.getElementById('chm-nom').value = ch ? ch.nom : '';
+  document.getElementById('chm-adresse').value = ch ? (ch.adresse||'') : '';
+  document.getElementById('chm-date').value = ch ? (ch.dateDebut||'') : today();
+  document.getElementById('chm-tel').value = ch ? (ch.tel||'') : '';
+  document.getElementById('chm-statut').value = ch ? (ch.statut||'en_cours') : 'en_cours';
+  document.getElementById('chm-notes').value = ch ? (ch.notes||'') : '';
+  document.getElementById('chm-type').value = 'particulier';
+  chOnClientInput();
+  openM('modal-chantier');
+};
+window.chSave = function(){
+  const clientNom = document.getElementById('chm-client').value.trim();
+  const nom = document.getElementById('chm-nom').value.trim();
+  if(!clientNom){ notify('Client requis', 'err'); return; }
+  if(!nom){ notify('Nom du chantier requis', 'err'); return; }
+  const type = document.getElementById('chm-type').value;
+  const tel = document.getElementById('chm-tel').value.trim();
+  let cl = clientOf(clientNom);
+  if(!cl){ cl = {nom: clientNom, email: '', tel, ville: '', adresse: document.getElementById('chm-adresse').value.trim(), ice: '', type}; D.clients.push(cl); }
+  else if(cl.type !== type){ cl.type = type; }
+  const id = document.getElementById('chm-id').value;
+  const data = {
+    clientNom, nom, adresse: document.getElementById('chm-adresse').value.trim(),
+    dateDebut: document.getElementById('chm-date').value, tel,
+    statut: document.getElementById('chm-statut').value, notes: document.getElementById('chm-notes').value
+  };
+  let ch;
+  if(id){
+    ch = chById(+id);
+    const oldNom = ch.nom, oldCl = ch.clientNom;
+    if(chs().some(c => c !== ch && c.clientNom === clientNom && normN(c.nom) === normN(nom))){ notify('Ce client a déjà un chantier avec ce nom', 'err'); return; }
+    Object.assign(ch, data);
+    // Renommage → mettre à jour la case « Chantier » des devis/factures liés
+    ch.devis.concat(ch.factures).forEach(l => { const d = docById(l.docId); if(d) d.chantierNom = nom; });
+    (D.docs||[]).forEach(d => { if(d.clientNom === oldCl && normN(d.chantierNom) === normN(oldNom)) d.chantierNom = nom; });
+  }
+  else {
+    if(chs().some(c => c.clientNom === clientNom && normN(c.nom) === normN(nom))){ notify('Ce client a déjà un chantier avec ce nom', 'err'); return; }
+    ch = normCh(Object.assign({id: Date.now()}, data)); chs().unshift(ch);
+  }
+  save(); closeModal('modal-chantier');
+  notify(id ? 'Chantier modifié ✅' : 'Chantier créé ✅', 'ok');
+  if(curChId) renderDetail(); else if(!id) chOpenDetail(ch.id, 'devis'); else renderChantiers();
+};
+window.chDelete = function(id){
+  const ch = chById(id); if(!ch) return;
+  const nbAv = encs().filter(e => e.chantierId === id).length;
+  if(!confirm(`Supprimer le chantier « ${ch.nom} » ?\n\nLes devis et factures ne sont PAS supprimés (seulement le lien).` + (nbAv?`\n${nbAv} avance(s) restent dans Trésorerie (sans lien chantier).`:''))) return;
+  encs().forEach(e => { if(e.chantierId === id) delete e.chantierId; });
+  (D.docs||[]).forEach(d => { if(d.clientNom === ch.clientNom && normN(d.chantierNom) === normN(ch.nom)) d.chantierNom = ''; });
+  D.chantiers = chs().filter(c => c.id !== id);
+  save(); notify('Chantier supprimé'); if(curChId === id) chBack(); else renderChantiers();
+};
+window.chSetStatut = function(id, v){ const ch = chById(id); ch.statut = v; save(); renderDetail(); };
+
+// ─────────────────────────── DÉTAIL ───────────────────────────
+window.chTab = function(t){ curTab = t; renderDetail(); };
+function renderDetail(){
+  const ch = chById(curChId);
+  if(!ch){ chBack(); return; }
+  normCh(ch);
+  const s = situation(ch);
+  const t = typeClient(ch.clientNom);
+  const cl = clientOf(ch.clientNom) || {};
+  const st = ch.statut || 'en_cours';
+  const tabs = [['devis','📄 Devis & factures ('+ch.devis.length+')'],['livraison','🚚 Livraison ('+s.nbLiv+'/'+s.nbTot+')'],['paiements','💰 Avances & reste'],['couts','💹 Coûts & bénéfice'],['docs','📁 Autres documents']];
+  let body = '';
+  if(curTab === 'devis') body = htmlDevis(ch);
+  else if(curTab === 'livraison') body = htmlLivraison(ch);
+  else if(curTab === 'paiements') body = htmlPaiements(ch, s);
+  else if(curTab === 'couts') body = htmlCouts(ch);
+  else body = htmlDocs(ch);
+
+  document.getElementById('ch-detail-view').innerHTML = `
+  <span class="ch-back" onclick="chBack()">← Tous les chantiers</span>
+  <div class="card">
+    <div class="ch-head">
+      <div>
+        <h2>🏗️ ${esc(ch.nom)}</h2>
+        <div class="ch-meta">
+          <strong style="color:var(--txt);">${esc(ch.clientNom)}</strong> <span class="ch-pill" style="background:${t==='particulier'?'#fef3c7;color:#92400e':'#CFE2F3;color:#2E5A8E'};">${typeLbl(t)}</span>
+          ${cl.ice?` · ICE ${esc(cl.ice)}`:''}<br>
+          ${ch.adresse?'📍 '+esc(ch.adresse)+' · ':''}${ch.tel||cl.tel?'📞 '+esc(ch.tel||cl.tel)+' · ':''}Début : ${dFr(ch.dateDebut)}
+          ${ch.notes?`<br>📝 ${esc(ch.notes)}`:''}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+        <select onchange="chSetStatut(${ch.id},this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:7px;font-family:var(--font);">
+          ${Object.keys(CH_STATUTS).map(k => `<option value="${k}" ${k===st?'selected':''}>${CH_STATUTS[k].l}</option>`).join('')}
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="chOpenModal(${ch.id})">✏️ Modifier</button>
+      </div>
+    </div>
+  </div>
+  <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);">
+    <div class="stat-card blue"><div class="stat-label">Montant accordé</div><div class="stat-value" style="font-size:16px;">${fmt(s.accTot)}</div><span class="badge bb">${s.nbValides} devis validé${s.nbValides>1?'s':''}</span></div>
+    <div class="stat-card green"><div class="stat-label">Avances reçues</div><div class="stat-value" style="font-size:16px;">${fmt(s.paye)}</div><span class="badge bg">${s.accTot?Math.round(s.paye*100/s.accTot):0}%</span></div>
+    <div class="stat-card red"><div class="stat-label">Reste à payer</div><div class="stat-value" style="font-size:16px;color:${s.reste>0.01?'var(--red)':'var(--green)'};">${fmt(s.reste)}</div><span class="badge br">MAD</span></div>
+    <div class="stat-card amber"><div class="stat-label">Livraison</div><div class="stat-value" style="font-size:16px;">${s.pctLiv}%</div><span class="badge ba">${s.nbLiv}/${s.nbTot} produits</span></div>
+    <div class="stat-card"><div class="stat-label">Facturé (TTC)</div><div class="stat-value" style="font-size:16px;">${fmt(s.facture)}</div><span class="badge bp">${allFactures(ch).length} facture(s)</span></div>
+  </div>
+  <div class="tab-bar">${tabs.map(([k, l]) => `<div class="tab ${curTab===k?'active':''}" onclick="chTab('${k}')">${l}</div>`).join('')}</div>
+  ${body}`;
+}
+
+// ── Onglet DEVIS & FACTURES
+function htmlDevis(ch){
+  const cards = ch.devis.map((l, li) => {
+    const d = docById(l.docId);
+    if(!d) return `<div class="ch-devis-card"><div class="ch-devis-top"><span class="ch-red">⚠️ Devis supprimé de la liste des documents</span><button class="btn-ghost" onclick="chUnlinkDevis(${ch.id},${li})">Retirer le lien</button></div></div>`;
+    const acc = accorde(l);
+    const payeD = paiementsDevis(ch, d.id).reduce((s, e) => s + (Number(e.montant)||0), 0);
+    const facs = facturesOfDevis(ch, d);
+    const di = D.docs.indexOf(d);
+    const manualSet = new Set(ch.factures.map(f => f.docId));
+    return `<div class="ch-devis-card" style="${l.valide?'border-color:#86efac;':''}">
+      <div class="ch-devis-top">
+        <div><span class="bes-badge">DEVIS</span> <strong class="ch-num" style="font-size:13px;">${esc(d.num)}</strong>
+          <span style="color:var(--muted);font-size:11px;"> · ${dFr(d.date)} · ${(d.items||[]).length} ligne(s) · HT ${fmt(d.ht)} · TTC ${fmt(d.ttc)}</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn-ghost" onclick="openDocModal(${di})">✏️ Modifier</button>
+          <button class="btn-ghost" style="color:#C0392B;" onclick="exportPDF(${di})">PDF</button>
+          <button class="btn-ghost" style="color:var(--green);font-weight:700;" onclick="chConvertir(${ch.id},${d.id})">→ Facture complète</button>
+          <button class="btn-ghost" style="color:var(--red);" onclick="chUnlinkDevis(${ch.id},${li})" title="Retirer ce devis du chantier">✕</button>
+        </div>
+      </div>
+      <div class="ch-devis-body">
+        <div><label>Validation client</label>
+          <label style="display:flex;align-items:center;gap:6px;text-transform:none;font-size:12px;color:${l.valide?'var(--green)':'var(--txt)'};letter-spacing:0;min-height:32px;">
+            <input type="checkbox" ${l.valide?'checked':''} onchange="chSetValide(${ch.id},${li},this.checked)" style="width:18px;min-height:18px;"> ${l.valide?'✅ Devis validé':'Non validé'}</label></div>
+        <div><label>Date validation</label><input type="date" value="${l.dateValidation||''}" ${l.valide?'':'disabled'} onchange="chSetLink(${ch.id},${li},'dateValidation',this.value)"></div>
+        <div><label>Montant accordé en</label><select onchange="chSetLink(${ch.id},${li},'base',this.value)"><option value="TTC" ${l.base!=='HT'?'selected':''}>TTC</option><option value="HT" ${l.base==='HT'?'selected':''}>HT</option></select></div>
+        <div><label>Montant accordé (MAD)</label><input type="number" step="0.01" placeholder="${fmt(autoMontant(l))} (auto)" value="${l.montant!=null&&l.montant!==''?l.montant:''}" onchange="chSetLink(${ch.id},${li},'montant',this.value)" title="Laisser vide = montant ${l.base==='HT'?'HT':'TTC'} du devis. Saisir un montant si remise / prix négocié."></div>
+        <div><label>Avancé</label><div class="ch-kv ch-green">${fmt(payeD)}</div></div>
+        <div><label>Reste à payer</label><div class="ch-kv ${acc-payeD>0.01?'ch-red':'ch-green'}">${fmt(acc-payeD)}</div></div>
+      </div>
+      <div class="ch-fac-list">
+        <strong style="color:var(--muted);">Factures liées :</strong>
+        ${facs.length ? facs.map(f => `<span class="ch-fac-chip">🧾 ${esc(f.num)} · ${fmt(f.ttc)} TTC
+            <button onclick="exportPDF(${D.docs.indexOf(f)})" title="PDF">📄</button>
+            ${manualSet.has(f.id)?`<button onclick="chUnlinkFacture(${ch.id},${f.id})" title="Retirer le lien">✕</button>`:''}</span>`).join('') : '<span style="color:var(--muted);">aucune</span>'}
+        <button class="btn-ghost" onclick="chOpenAvance(${ch.id},${d.id})" style="margin-left:auto;color:var(--green);">💰 Avance sur ce devis</button>
+      </div>
+    </div>`;
+  }).join('');
+  const orphans = ch.factures.filter(fl => !fl.devisId).map(fl => docById(fl.docId)).filter(Boolean);
+  return `<div class="card">
+    <div class="card-hdr"><div class="card-title">Devis liés au chantier</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="chOpenLink(${ch.id},'FACTURE')">🔗 Lier une facture</button>
+        <button class="btn btn-outline btn-sm" onclick="chOpenLink(${ch.id},'DEVIS')">🔗 Lier un devis existant</button>
+        <button class="btn btn-primary btn-sm" onclick="chNouveauDevis(${ch.id})">+ Nouveau devis</button>
+      </div></div>
+    ${cards || '<div class="ch-empty">Aucun devis lié. Liez un devis existant ou créez-en un nouveau.</div>'}
+    ${orphans.length?`<div class="ch-fac-list" style="padding:10px 16px;"><strong style="color:var(--muted);">Factures du chantier (sans devis) :</strong> ${orphans.map(f => `<span class="ch-fac-chip">🧾 ${esc(f.num)} · ${fmt(f.ttc)} TTC <button onclick="exportPDF(${D.docs.indexOf(f)})">📄</button><button onclick="chUnlinkFacture(${ch.id},${f.id})">✕</button></span>`).join('')}</div>`:''}
+    <div style="padding:8px 16px 12px;font-size:11px;color:var(--muted);">💡 Cochez « Devis validé » pour activer le suivi de livraison de ses produits et le compter dans le montant accordé. Le montant accordé suit automatiquement le HT ou le TTC du devis ; saisissez un montant pour une remise ou un prix négocié.</div>
+  </div>`;
+}
+
+window.chSetValide = function(chId, li, v){
+  const l = chById(chId).devis[li];
+  l.valide = v;
+  if(v && !l.dateValidation) l.dateValidation = today();
+  save(); renderDetail();
+  if(v) notify('Devis validé ✅ — suivi de livraison activé', 'ok');
+};
+window.chSetLink = function(chId, li, field, v){
+  const l = chById(chId).devis[li];
+  if(field === 'montant') l.montant = (v === '' ? null : Number(v));
+  else l[field] = v;
+  save(); renderDetail();
+};
+window.chUnlinkDevis = function(chId, li){
+  const ch = chById(chId);
+  const d = docById(ch.devis[li].docId);
+  const hasLiv = d && ch.livraisons.some(bl => (bl.lignes||[]).some(x => x.docId === d.id));
+  if(!confirm('Retirer ce devis du chantier ? (le devis n\'est pas supprimé)' + (hasLiv?'\n\n⚠️ Des livraisons existent pour ce devis : elles resteront dans l\'historique des BL.':''))) return;
+  if(d && normN(d.chantierNom) === normN(ch.nom)) d.chantierNom = '';
+  ch.devis.splice(li, 1); save(); renderDetail();
+};
+window.chUnlinkFacture = function(chId, fid){
+  const ch = chById(chId);
+  ch.factures = ch.factures.filter(f => f.docId !== fid);
+  const f = docById(fid); if(f && normN(f.chantierNom) === normN(ch.nom)) f.chantierNom = '';
+  save(); renderDetail();
+};
+
+// Lier devis / facture
+let linkChId = null;
+window.chOpenLink = function(chId, kind){
+  linkChId = chId;
+  const ch = chById(chId);
+  document.getElementById('chl-kind').value = kind;
+  document.getElementById('chl-title').textContent = kind === 'DEVIS' ? 'Lier un devis existant' : 'Lier une facture';
+  document.getElementById('chl-lbl').textContent = kind === 'DEVIS' ? 'Devis' : 'Facture';
+  document.getElementById('chl-all').checked = false;
+  document.getElementById('chl-devis-wrap').style.display = kind === 'FACTURE' ? 'flex' : 'none';
+  document.getElementById('chl-base-wrap').style.display = kind === 'DEVIS' ? 'flex' : 'none';
+  document.getElementById('chl-devis').innerHTML = '<option value="">— Chantier (aucun devis précis) —</option>' +
+    ch.devis.map(l => docById(l.docId)).filter(Boolean).map(d => `<option value="${d.id}">${esc(d.num)} — ${fmt(d.ttc)} TTC</option>`).join('');
+  chFillLinkSelect();
+  openM('modal-ch-link');
+};
+window.chFillLinkSelect = function(){
+  const ch = chById(linkChId);
+  const kind = document.getElementById('chl-kind').value;
+  const all = document.getElementById('chl-all').checked;
+  const used = new Set();
+  if(kind === 'DEVIS') chs().forEach(c => (c.devis||[]).forEach(l => used.add(l.docId)));
+  else allFactures(ch).forEach(f => used.add(f.id));
+  const list = (D.docs||[]).filter(d => d.type === kind && !used.has(d.id) && (all || d.clientNom === ch.clientNom));
+  document.getElementById('chl-doc').innerHTML = list.length
+    ? list.map(d => `<option value="${d.id}">${esc(d.num)} — ${esc(d.clientNom)} — ${dFr(d.date)} — ${fmt(d.ttc)} TTC</option>`).join('')
+    : `<option value="">Aucun ${kind==='DEVIS'?'devis':'facture'} disponible pour ce client (cochez « autres clients »)</option>`;
+};
+window.chSaveLink = function(){
+  const ch = chById(linkChId);
+  const v = document.getElementById('chl-doc').value;
+  if(!v){ notify('Rien à lier', 'err'); return; }
+  const id = Number(v);
+  const doc = docById(id);
+  if(doc) doc.chantierNom = ch.nom;
+  if(document.getElementById('chl-kind').value === 'DEVIS'){
+    chs().forEach(c => { if(c !== ch) c.devis = (c.devis||[]).filter(l => l.docId !== id); });
+    ch.devis.push({docId: id, valide: false, dateValidation: '', base: document.getElementById('chl-base').value, montant: null});
+  } else {
+    const dv = document.getElementById('chl-devis').value;
+    chs().forEach(c => { if(c !== ch) c.factures = (c.factures||[]).filter(f => f.docId !== id); });
+    ch.factures.push({docId: id, devisId: dv ? Number(dv) : null});
+  }
+  chSyncFromDocs(); save(); closeModal('modal-ch-link'); notify('Document lié ✅', 'ok'); renderDetail();
+};
+
+// ─────────── Case « Chantier » + « Demandé par » dans le formulaire Devis/Facture ───────────
+const normN = v => String(v||'').trim().toLowerCase().replace(/\s+/g,' ');
+function chOfDoc(docId){
+  return chs().find(c => normCh(c).devis.some(l => l.docId === docId) || c.factures.some(f => f.docId === docId));
+}
+window.chFillDocChantiers = function(){
+  const sel = document.getElementById('d-client');
+  const cl = sel && sel.value !== '' ? (D.clients[parseInt(sel.value)]||{}).nom : '';
+  const names = new Set();
+  chs().filter(c => !cl || c.clientNom === cl).forEach(c => names.add(c.nom));
+  (D.docs||[]).filter(d => d.chantierNom && (!cl || d.clientNom === cl)).forEach(d => names.add(d.chantierNom));
+  document.getElementById('dl-d-chantiers').innerHTML = Array.from(names).sort().map(n => `<option value="${esc(n)}">`).join('');
+};
+let presetDoc = null;
+const _openDocPrev = window.openDocModal;
+window.openDocModal = function(idx){
+  const r = _openDocPrev(idx);
+  const d = idx >= 0 ? D.docs[idx] : null;
+  let chN = d ? (d.chantierNom||'') : '';
+  if(d && !chN){ const c = chOfDoc(d.id); if(c) chN = c.nom; }
+  if(presetDoc){
+    const ci = (D.clients||[]).findIndex(c => c.nom === presetDoc.client);
+    if(ci >= 0) document.getElementById('d-client').value = ci;
+    chN = presetDoc.chantier;
+    presetDoc = null;
+  }
+  document.getElementById('d-chantier').value = chN;
+  chFillDocChantiers();
+  return r;
+};
+window.chNouveauDevis = function(chId){
+  const ch = chById(chId);
+  presetDoc = {client: ch.clientNom, chantier: ch.nom};
+  openDocModal(-1);
+};
+const _saveDocPrev = window.saveDoc;
+window.saveDoc = function(withJson){
+  const editIdx = parseInt(document.getElementById('doc-edit-idx').value);
+  const old = editIdx >= 0 ? D.docs[editIdx] : null;
+  const before = D.docs[0];
+  const chN = (document.getElementById('d-chantier').value||'').trim().replace(/\s+/g,' ');
+  const r = _saveDocPrev(withJson);
+  let nd = null;
+  if(old && D.docs[editIdx] && D.docs[editIdx] !== old && D.docs[editIdx].id === old.id) nd = D.docs[editIdx];
+  else if(!old && D.docs[0] && D.docs[0] !== before) nd = D.docs[0];
+  if(nd){
+    // Conserver les champs de liaison que le formulaire ne connaît pas (devis d'origine, BL…)
+    if(old) ['convertedFrom','fromBL'].forEach(k => { if(old[k] != null && nd[k] == null) nd[k] = old[k]; });
+    // Réutiliser l'orthographe exacte d'un chantier existant (majuscules/minuscules)
+    const exist = chs().find(c => c.clientNom === nd.clientNom && normN(c.nom) === normN(chN));
+    nd.chantierNom = exist ? exist.nom : chN;
+    if(!chN){ // chantier vidé → retirer le lien
+      chs().forEach(c => { normCh(c); c.devis = c.devis.filter(l => l.docId !== nd.id); c.factures = c.factures.filter(f => f.docId !== nd.id); });
+    }
+    chSyncFromDocs();
+    save();
+    if(chN) notify(`${nd.type} ${nd.num} enregistré — chantier « ${nd.chantierNom} » ✅`, 'ok');
+    if(typeof renderDocs === 'function') renderDocs();
+  }
+  if(curChId && document.getElementById('pg-chantiers').classList.contains('active')) renderDetail();
+  return r;
+};
+
+// Synchronisation : chaque document qui porte un nom de chantier est rattaché au bon chantier
+// (créé automatiquement s'il n'existe pas encore pour ce client).
+function chSyncFromDocs(){
+  let changed = false;
+  // 1) liens existants → recopier le nom du chantier dans le document
+  chs().forEach(c => {
+    normCh(c);
+    c.devis.concat(c.factures).forEach(l => {
+      const d = docById(l.docId);
+      if(d && !d.chantierNom){ d.chantierNom = c.nom; changed = true; }
+    });
+  });
+  // 2) documents → chantiers
+  (D.docs||[]).forEach(d => {
+    if(!d.chantierNom || (d.type !== 'DEVIS' && d.type !== 'FACTURE')) return;
+    let target = chs().find(c => c.clientNom === d.clientNom && normN(c.nom) === normN(d.chantierNom));
+    if(!target){
+      target = normCh({id: Date.now() + Math.floor(Math.random()*100000), nom: d.chantierNom, clientNom: d.clientNom,
+        adresse: '', dateDebut: d.date || today(), statut: 'en_cours', tel: '', notes: ''});
+      chs().unshift(target); changed = true;
+    }
+    if(d.type === 'DEVIS'){
+      let moved = null;
+      chs().forEach(c => { if(c === target) return; const i = c.devis.findIndex(l => l.docId === d.id); if(i >= 0){ moved = c.devis.splice(i, 1)[0]; changed = true; } });
+      if(!target.devis.some(l => l.docId === d.id)){
+        target.devis.push(moved || {docId: d.id, valide: false, dateValidation: '', base: 'TTC', montant: null}); changed = true;
+      }
+    } else {
+      let moved = null;
+      chs().forEach(c => { if(c === target) return; const i = c.factures.findIndex(f => f.docId === d.id); if(i >= 0){ moved = c.factures.splice(i, 1)[0]; changed = true; } });
+      const implicit = target.devis.some(l => facturesOfDevis(target, docById(l.docId)).some(f => f.id === d.id));
+      if(!implicit && !target.factures.some(f => f.docId === d.id)){
+        target.factures.push(moved && target.devis.some(l => l.docId === moved.devisId) ? moved : {docId: d.id, devisId: null}); changed = true;
+      }
+    }
+  });
+  return changed;
+}
+window.chSyncFromDocs = chSyncFromDocs;
+// Import JSON : rattacher aussi les documents importés
+if(typeof window.doImport === 'function'){
+  const _impPrev = window.doImport;
+  window.doImport = function(){ const r = _impPrev.apply(this, arguments); if(chSyncFromDocs()) save(); return r; };
+}
+
+window.chConvertir = function(chId, devisId){
+  const i = D.docs.findIndex(d => d.id === devisId);
+  if(i < 0) return;
+  const before = D.docs[0];
+  convertToFacture(i);
+  if(D.docs[0] !== before){ curTab = 'devis'; renderDetail(); }
+};
+
+// ── Onglet LIVRAISON
+function htmlLivraison(ch){
+  const lignes = lignesAValider(ch);
+  let rowsHtml = '';
+  let lastDoc = null;
+  lignes.forEach(L => {
+    if(L.doc !== lastDoc){
+      rowsHtml += `<tr><td colspan="8" style="background:#eef4fb;font-weight:700;font-size:11px;color:var(--bes);">DEVIS ${esc(L.doc.num)}</td></tr>`;
+      lastDoc = L.doc;
+    }
+    const e = etatLigne(ch, L);
+    const livre = e.k === 'livre' || e.k === 'partiel';
+    const sel = livre
+      ? `<span class="ch-pill" style="background:${e.bg};color:${e.fg};">${e.l}</span>`
+      : `<select class="ch-etat-sel" style="background:${e.bg};color:${e.fg};" onchange="chSetEtat(${ch.id},${L.doc.id},${L.idx},this.value)">${Object.keys(ETATS).map(k => `<option value="${k}" ${k===e.k?'selected':''}>${ETATS[k].l}</option>`).join('')}</select>`;
+    rowsHtml += `<tr>
+      <td class="tc">${L.idx+1}</td>
+      <td><strong>${esc(L.it.des)}</strong></td>
+      <td class="tc" style="font-size:11px;">${esc(L.it.dim||'')}</td>
+      <td class="tc">${esc(L.it.unite||'')}</td>
+      <td class="tc cq">${L.q}</td>
+      <td class="tc" style="font-weight:700;color:var(--green);">${r2(L.liv)}</td>
+      <td class="tc" style="font-weight:700;color:${L.reste>0?'var(--red)':'var(--green)'};">${L.reste}</td>
+      <td class="tc">${sel} ${L.reste>0?`<button class="btn-ghost" title="Livrer le reste de ce produit" onclick="chLivrerVite(${ch.id},${L.doc.id},${L.idx})">🚚</button>`:''}</td>
+    </tr>`;
+  });
+  const nonVal = ch.devis.filter(l => !l.valide).map(l => docById(l.docId)).filter(Boolean);
+  const bls = ch.livraisons.slice().sort((a, b) => (b.date||'').localeCompare(a.date||'') || b.id - a.id);
+  return `<div class="card">
+    <div class="card-hdr"><div class="card-title">Produits des devis validés — statut de livraison</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="chOpenPrint(${ch.id},null)">🖨 Imprimer les produits livrés</button>
+        <button class="btn btn-amber btn-sm" onclick="chOpenLivraison(${ch.id})">🚚 Nouvelle livraison</button>
+      </div></div>
+    ${lignes.length ? `<div style="overflow-x:auto;padding:10px 12px;"><table class="bes-tbl">
+      <thead><tr><th>N°</th><th class="tl">Désignation</th><th>Dimensions</th><th>Unité</th><th>Commandé</th><th>Livré</th><th>Reste</th><th>Statut</th></tr></thead>
+      <tbody>${rowsHtml}</tbody></table></div>`
+      : `<div class="ch-empty">Aucun devis validé.${ch.devis.length?' Validez un devis dans l\'onglet « Devis & factures » pour suivre ses livraisons.':''}</div>`}
+    ${nonVal.length?`<div style="padding:0 16px 12px;font-size:11px;color:var(--muted);">⏳ Devis non validés (non suivis) : ${nonVal.map(d => esc(d.num)).join(', ')}</div>`:''}
+  </div>
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Bons de livraison (${bls.length})</div></div>
+    ${bls.length ? `<table><thead><tr><th>N° BL</th><th>Date</th><th>Produits livrés</th><th>Valeur HT</th><th>Facture</th><th>Note</th><th></th></tr></thead><tbody>
+      ${bls.map(bl => {
+        const val = (bl.lignes||[]).reduce((s, x) => s + (Number(x.q)||0)*(Number(x.pu)||0), 0);
+        const f = bl.factureId ? docById(bl.factureId) : null;
+        return `<tr>
+          <td><strong class="ch-num">${esc(bl.num)}</strong></td>
+          <td>${dFr(bl.date)}</td>
+          <td style="font-size:11px;">${(bl.lignes||[]).map(x => `${esc(x.des)} <b>×${x.q}</b>`).join('<br>')}</td>
+          <td class="ch-num">${fmt(val)}</td>
+          <td>${f?`<span class="ch-fac-chip">🧾 ${esc(f.num)}</span>`:`<button class="btn-ghost" style="color:var(--purple);" onclick="chFacturerBL(${ch.id},${bl.id})">🧾 Facturer</button>`}</td>
+          <td style="font-size:11px;">${esc(bl.note||'')}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn-ghost" onclick="chPrintLivres(${ch.id},${bl.id},false)">🖨 BL</button>
+            <button class="btn-ghost" onclick="chPrintLivres(${ch.id},${bl.id},true)" title="Avec prix">🖨 + prix</button>
+            <button class="btn-icon" style="color:var(--red);" onclick="chDelBL(${ch.id},${bl.id})">🗑</button>
+          </td></tr>`;
+      }).join('')}</tbody></table>` : '<div class="ch-empty">Aucune livraison enregistrée.</div>'}
+  </div>`;
+}
+window.chSetEtat = function(chId, docId, idx, v){
+  const ch = chById(chId); ch.etats[keyIt(docId, idx)] = v; save(); renderDetail();
+};
+
+let livChId = null, livLignes = [];
+window.chOpenLivraison = function(chId, onlyKey){
+  const ch = normCh(chById(chId));
+  livChId = chId;
+  livLignes = lignesAValider(ch).filter(L => L.reste > 0).map(L => ({
+    L, chk: onlyKey ? keyIt(L.doc.id, L.idx) === onlyKey : false, q: L.reste
+  }));
+  if(!livLignes.length){ notify(ch.devis.some(l => l.valide) ? 'Tous les produits sont déjà livrés ✅' : 'Validez d\'abord un devis (onglet Devis & factures)', 'err'); return; }
+  document.getElementById('chv-num').value = genNumBL();
+  document.getElementById('chv-date').value = today();
+  document.getElementById('chv-note').value = '';
+  renderLivRows();
+  openM('modal-ch-liv');
+};
+function renderLivRows(){
+  let last = null;
+  document.getElementById('chv-rows').innerHTML = livLignes.map((x, i) => {
+    const L = x.L;
+    return `<tr style="${x.chk?'':'opacity:.75;'}">
+      <td class="tc"><input type="checkbox" ${x.chk?'checked':''} onchange="livLignes[${i}].chk=this.checked;renderLivRowsExt()" style="width:18px;min-height:18px;"></td>
+      <td class="tc" style="font-size:11px;font-family:var(--mono);">${esc(L.doc.num)}</td>
+      <td><strong>${esc(L.it.des)}</strong></td>
+      <td class="tc" style="font-size:11px;">${esc(L.it.dim||'')}</td>
+      <td class="tc">${esc(L.it.unite||'')}</td>
+      <td class="tc cq">${L.q}</td>
+      <td class="tc">${r2(L.liv)}</td>
+      <td class="tc"><input type="number" min="0" step="0.01" max="${L.reste}" value="${x.q}" oninput="livLignes[${i}].q=+this.value;if(+this.value>0&&!livLignes[${i}].chk){livLignes[${i}].chk=true;this.closest('tr').style.opacity=1;this.closest('tr').querySelector('input[type=checkbox]').checked=true;}" style="width:90px;text-align:center;"></td>
+    </tr>`;
+  }).join('');
+}
+window.renderLivRowsExt = renderLivRows;
+Object.defineProperty(window, 'livLignes', {get: () => livLignes, configurable: true});
+window.chLivToutCocher = function(v){ livLignes.forEach(x => { x.chk = v; if(v) x.q = x.L.reste; }); renderLivRows(); };
+window.chLivrerVite = function(chId, docId, idx){ chOpenLivraison(chId, keyIt(docId, idx)); };
+window.chSaveLivraison = function(andPrint){
+  const ch = chById(livChId);
+  const date = document.getElementById('chv-date').value;
+  const num = document.getElementById('chv-num').value.trim() || genNumBL();
+  if(!date){ notify('Date requise', 'err'); return; }
+  const sel = livLignes.filter(x => x.chk && x.q > 0);
+  if(!sel.length){ notify('Cochez au moins un produit avec une quantité', 'err'); return; }
+  const trop = sel.find(x => x.q > x.L.reste + 1e-9);
+  if(trop && !confirm(`« ${trop.L.it.des} » : quantité (${trop.q}) supérieure au reste à livrer (${trop.L.reste}). Continuer quand même ?`)) return;
+  const bl = {
+    id: Date.now(), num, date, note: document.getElementById('chv-note').value,
+    lignes: sel.map(x => ({docId: x.L.doc.id, docNum: x.L.doc.num, idx: x.L.idx, des: x.L.it.des||'', dim: x.L.it.dim||'', unite: x.L.it.unite||'', q: r2(x.q), pu: Number(x.L.it.pu)||0, tva: Number(x.L.doc.tva)||20}))
+  };
+  ch.livraisons.push(bl);
+  save(); closeModal('modal-ch-liv');
+  notify(`Livraison ${num} enregistrée ✅ (${sel.length} produit(s))`, 'ok');
+  curTab = 'livraison'; renderDetail();
+  if(andPrint) chPrintLivres(ch.id, bl.id, false);
+};
+window.chDelBL = function(chId, blId){
+  const ch = chById(chId);
+  const bl = ch.livraisons.find(b => b.id === blId);
+  if(!confirm(`Supprimer la livraison ${bl.num} ?` + (bl.factureId?'\n\n⚠️ Une facture a été générée depuis ce BL : elle n\'est pas supprimée.':''))) return;
+  ch.livraisons = ch.livraisons.filter(b => b.id !== blId);
+  save(); renderDetail();
+};
+
+// Facture depuis un BL (produits livrés uniquement)
+window.chFacturerBL = function(chId, blId){
+  const ch = chById(chId);
+  const bl = ch.livraisons.find(b => b.id === blId);
+  if(!bl) return;
+  const devisIds = Array.from(new Set(bl.lignes.map(x => x.docId)));
+  const d0 = docById(devisIds[0]) || {};
+  const tva = Number(d0.tva)||20;
+  const items = bl.lignes.map(x => ({des: x.des, dim: x.dim, unite: x.unite, q: x.q, pu: x.pu}));
+  const ht = items.reduce((s, r) => s + (r.q||0)*(r.pu||0), 0);
+  const num = genAutoNumDoc('FACTURE');
+  if(!confirm(`Créer la facture ${num} pour les produits livrés du ${bl.num} ?\n\nHT : ${fmt(ht)} MAD — TTC : ${fmt(ht*(1+tva/100))} MAD`)) return;
+  const cl = clientOf(ch.clientNom) || {};
+  const f = {
+    id: Date.now(), type: 'FACTURE', num, date: today(), statut: 'brouillon',
+    clientNom: d0.clientNom || ch.clientNom, clientAdresse: d0.clientAdresse || cl.adresse || '', clientIce: d0.clientIce || cl.ice || '',
+    items, ht, tva, ttc: ht + ht*tva/100, avancePct: 0,
+    notes: `Livraison ${bl.num} du ${dFr(bl.date)} — Chantier : ${ch.nom}`,
+    convertedFrom: devisIds.map(id => (docById(id)||{}).num).filter(Boolean).join(', '),
+    fromBL: bl.num, chantierNom: ch.nom
+  };
+  D.docs.unshift(f);
+  ch.factures.push({docId: f.id, devisId: devisIds.length === 1 ? devisIds[0] : null});
+  bl.factureId = f.id;
+  save(); notify(`Facture ${num} créée depuis ${bl.num} ✅`, 'ok');
+  refreshAll(); renderDetail();
+};
+
+// ── Onglet PAIEMENTS
+function htmlPaiements(ch, s){
+  const pays = paiements(ch).slice().sort((a, b) => (b.date||'').localeCompare(a.date||''));
+  const devisRows = ch.devis.map(l => {
+    const d = docById(l.docId); if(!d) return '';
+    const acc = accorde(l);
+    const p = paiementsDevis(ch, d.id).reduce((a, e) => a + (Number(e.montant)||0), 0);
+    return `<tr style="${l.valide?'':'opacity:.6;'}">
+      <td><strong class="ch-num">${esc(d.num)}</strong> ${l.valide?'<span class="status s-p">Validé</span>':'<span class="status s-b">Non validé</span>'}</td>
+      <td><span class="badge ${l.base==='HT'?'bgr':'bb'}" style="margin:0;">${l.base==='HT'?'HT':'TTC'}</span>${l.montant!=null&&l.montant!==''?' <span style="font-size:10px;color:var(--amber);">négocié</span>':''}</td>
+      <td class="ch-num">${fmt(acc)}</td>
+      <td class="ch-num ch-green">${fmt(p)}</td>
+      <td class="ch-num ${acc-p>0.01?'ch-red':'ch-green'}" style="font-weight:700;">${fmt(acc-p)}</td>
+      <td class="ch-num">${acc?Math.round(p*100/acc):0}%</td>
+    </tr>`;
+  }).join('');
+  const nonAff = pays.filter(e => e.chantierId === ch.id && e.docId == null).reduce((a, e) => a + (Number(e.montant)||0), 0);
+  const docLbl = e => { if(e.docId == null) return '<span style="color:var(--muted);">Chantier (global)</span>'; const d = docById(e.docId); return d ? `<span class="ch-num">${esc(d.num)}</span> <span style="font-size:10px;color:var(--muted);">${d.type==='FACTURE'?'facture':'devis'}</span>` : esc(e.docNum||'-'); };
+  return `<div class="card">
+    <div class="card-hdr"><div class="card-title">Situation par devis</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;"><button class="btn btn-outline btn-sm" onclick="chPrintSituation(${ch.id})">🖨 Situation client</button><button class="btn btn-outline btn-sm" onclick="chPrintSituationAdmin(${ch.id})">🔒 Situation admin</button></div></div>
+    ${devisRows?`<table><thead><tr><th>Devis</th><th>Base</th><th>Montant accordé</th><th>Avancé</th><th>Reste à payer</th><th>%</th></tr></thead><tbody>${devisRows}</tbody></table>`:'<div class="ch-empty">Aucun devis lié.</div>'}
+    <div class="ch-sum-box">
+      <span>Total accordé (devis validés)</span><span class="v">${fmt(s.accTot)} MAD</span>
+      ${nonAff?`<span style="color:var(--muted);">dont avances non affectées à un devis</span><span class="v" style="color:var(--muted);">${fmt(nonAff)} MAD</span>`:''}
+      <span>Total avances reçues</span><span class="v ch-green">${fmt(s.paye)} MAD</span>
+      <span style="font-size:14px;font-weight:700;">Reste à payer</span><span class="v" style="font-size:14px;color:${s.reste>0.01?'var(--red)':'var(--green)'};">${fmt(s.reste)} MAD</span>
+      ${s.enAttente?`<span style="color:var(--muted);font-size:11px;">Devis non validés (non comptés)</span><span class="v" style="color:var(--muted);font-size:11px;">${fmt(s.enAttente)} MAD</span>`:''}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Avances & paiements (${pays.length})</div>
+      <button class="btn btn-green btn-sm" onclick="chOpenAvance(${ch.id},null)">+ Nouvelle avance</button></div>
+    ${pays.length?`<table><thead><tr><th>Date</th><th>Imputé sur</th><th>Montant</th><th>Mode</th><th>Réf.</th><th>Note</th><th></th></tr></thead><tbody>
+      ${pays.map(e => `<tr>
+        <td>${dFr(e.date)}</td><td>${docLbl(e)}</td>
+        <td class="ch-num ch-green" style="font-weight:700;">${fmt(e.montant)}</td>
+        <td>${esc(e.mode||'')}</td><td style="font-size:11px;">${esc(e.refChq||'')}</td><td style="font-size:11px;">${esc(e.note||'')}</td>
+        <td style="white-space:nowrap;">${e.chantierId===ch.id?`<button class="btn-icon" onclick="chOpenAvance(${ch.id},null,${e.id})">✏️</button><button class="btn-icon" style="color:var(--red);" onclick="chDelAvance(${ch.id},${e.id})">🗑</button>`:'<span style="font-size:10px;color:var(--muted);">via Trésorerie</span>'}</td>
+      </tr>`).join('')}</tbody></table>`:'<div class="ch-empty">Aucune avance enregistrée.</div>'}
+  </div>`;
+}
+
+let avChId = null;
+window.chOpenAvance = function(chId, devisId, encId){
+  const ch = normCh(chById(chId));
+  avChId = chId;
+  const e = encId ? encs().find(x => x.id === encId) : null;
+  document.getElementById('cha-id').value = e ? e.id : '';
+  document.getElementById('cha-title').textContent = e ? 'Modifier l\'avance' : 'Nouvelle avance / paiement';
+  document.getElementById('cha-devis').innerHTML = '<option value="">Chantier (global, non affecté)</option>' +
+    ch.devis.map(l => docById(l.docId)).filter(Boolean).map(d => `<option value="${d.id}">Devis ${esc(d.num)} — ${fmt(d.ttc)} TTC</option>`).join('');
+  document.getElementById('cha-date').value = e ? e.date : today();
+  document.getElementById('cha-montant').value = e ? e.montant : '';
+  document.getElementById('cha-devis').value = e ? (e.docId || '') : (devisId || (ch.devis.length === 1 ? ch.devis[0].docId : ''));
+  document.getElementById('cha-mode').value = e ? (e.mode||'Espèces') : 'Espèces';
+  document.getElementById('cha-ref').value = e ? (e.refChq||'') : '';
+  document.getElementById('cha-note').value = e ? (e.note||'') : '';
+  chAvInfo();
+  openM('modal-ch-av');
+};
+window.chAvInfo = function(){
+  const ch = chById(avChId);
+  const v = document.getElementById('cha-devis').value;
+  const info = document.getElementById('cha-info');
+  if(!v){ const s = situation(ch); info.textContent = `Chantier — accordé ${fmt(s.accTot)} MAD · reste ${fmt(s.reste)} MAD`; return; }
+  const l = ch.devis.find(x => x.docId === Number(v));
+  const acc = accorde(l);
+  const p = paiementsDevis(ch, Number(v)).reduce((a, e) => a + (Number(e.montant)||0), 0);
+  info.textContent = `Accordé ${fmt(acc)} MAD (${l.base==='HT'?'HT':'TTC'}) · déjà avancé ${fmt(p)} · reste ${fmt(acc-p)} MAD`;
+};
+window.chSaveAvance = function(){
+  const ch = chById(avChId);
+  const montant = parseFloat(document.getElementById('cha-montant').value)||0;
+  if(montant <= 0){ notify('Montant invalide', 'err'); return; }
+  const dv = document.getElementById('cha-devis').value;
+  const d = dv ? docById(Number(dv)) : null;
+  const editId = document.getElementById('cha-id').value;
+  const data = {
+    date: document.getElementById('cha-date').value || today(),
+    docId: d ? d.id : null, docNum: d ? d.num : '', docType: d ? d.type : '',
+    clientNom: ch.clientNom, montant, mode: document.getElementById('cha-mode').value,
+    refChq: document.getElementById('cha-ref').value,
+    note: document.getElementById('cha-note').value || ('Avance chantier : ' + ch.nom),
+    chantierId: ch.id
+  };
+  if(editId){ const e = encs().find(x => String(x.id) === editId); Object.assign(e, data); }
+  else encs().unshift(Object.assign({id: Date.now()}, data));
+  save(); closeModal('modal-ch-av');
+  notify(`Avance de ${fmt(montant)} MAD enregistrée ✅`, 'ok');
+  refreshAll(); curTab = curTab === 'devis' ? 'devis' : 'paiements'; renderDetail();
+};
+window.chDelAvance = function(chId, encId){
+  if(!confirm('Supprimer cette avance ? (elle sera aussi retirée de la Trésorerie)')) return;
+  D.encaissements = encs().filter(e => e.id !== encId);
+  save(); refreshAll(); renderDetail();
+};
+
+// Préserver le lien chantier / devis quand une avance est modifiée depuis la Trésorerie
+if(typeof window.saveEnc === 'function'){
+  const _saveEncPrev = window.saveEnc;
+  window.saveEnc = function(){
+    const idx = parseInt((document.getElementById('enc-edit-idx')||{}).value);
+    const old = idx >= 0 && D.encaissements ? Object.assign({}, D.encaissements[idx]) : null;
+    const r = _saveEncPrev();
+    if(old && old.chantierId && D.encaissements[idx] && D.encaissements[idx].id === old.id){
+      const n = D.encaissements[idx];
+      n.chantierId = old.chantierId;
+      if(n.docId == null && old.docType === 'DEVIS'){ n.docId = old.docId; n.docNum = old.docNum; n.docType = old.docType; }
+      save();
+    }
+    return r;
+  };
+}
+
+// ── Onglet AUTRES DOCUMENTS
+function sortiesOf(ch){
+  const nomL = (ch.nom||'').toLowerCase().trim();
+  const cliL = (ch.clientNom||'').toLowerCase().trim();
+  return (D.sorties||[]).filter(s => {
+    if(s.chantierId === ch.id) return true;
+    const det = (s.detail||'').toLowerCase().trim();
+    return det && (det === nomL || (nomL && (det.includes(nomL) || nomL.includes(det))) || (cliL && det.includes(cliL)));
+  });
+}
+function htmlDocs(ch){
+  const sorties = sortiesOf(ch);
+  const valS = sorties.reduce((a, s) => a + (Number(s.qty)||0)*(Number(s.pmpSortie)||0), 0);
+  const devis = ch.devis.map(l => docById(l.docId)).filter(Boolean);
+  const facs = allFactures(ch);
+  const docRow = (d, extra) => { const i = D.docs.indexOf(d); return `<tr><td><span class="bes-badge" style="${d.type==='FACTURE'?'background:#7c3aed;':''}">${d.type}</span></td><td class="ch-num"><strong>${esc(d.num)}</strong></td><td>${dFr(d.date)}</td><td class="ch-num">${fmt(d.ht)}</td><td class="ch-num">${fmt(d.ttc)}</td><td style="font-size:11px;">${extra||''}</td><td style="white-space:nowrap;"><button class="btn-ghost" onclick="openDocModal(${i})">✏️</button> <button class="btn-ghost" style="color:#C0392B;" onclick="exportPDF(${i})">PDF</button></td></tr>`; };
+  return `<div class="card">
+    <div class="card-hdr"><div class="card-title">Devis, factures & bons de livraison</div></div>
+    <table><thead><tr><th>Type</th><th>N°</th><th>Date</th><th>HT</th><th>TTC</th><th>Lien</th><th></th></tr></thead><tbody>
+      ${devis.map(d => docRow(d, '')).join('')}
+      ${facs.map(f => docRow(f, f.fromBL ? 'depuis '+esc(f.fromBL) : (f.convertedFrom ? 'depuis devis '+esc(f.convertedFrom) : 'liée manuellement'))).join('')}
+      ${ch.livraisons.map(bl => `<tr><td><span class="bes-badge" style="background:#d97706;">BL</span></td><td class="ch-num"><strong>${esc(bl.num)}</strong></td><td>${dFr(bl.date)}</td><td class="ch-num">${fmt((bl.lignes||[]).reduce((a, x) => a + x.q*x.pu, 0))}</td><td></td><td style="font-size:11px;">${(bl.lignes||[]).length} produit(s)</td><td><button class="btn-ghost" onclick="chPrintLivres(${ch.id},${bl.id},false)">🖨</button></td></tr>`).join('')}
+      ${!devis.length && !facs.length && !ch.livraisons.length ? '<tr><td colspan="7" class="ch-empty">Aucun document</td></tr>' : ''}
+    </tbody></table>
+  </div>
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Sorties de stock vers ce chantier (${sorties.length})</div><span style="font-size:11px;color:var(--muted);">Valeur (PMP) : <b class="ch-num" style="color:var(--txt);">${fmt(valS)} MAD HT</b></span></div>
+    ${sorties.length?`<table><thead><tr><th>Date</th><th>N° BS</th><th>Produit</th><th>Qté</th><th>Valeur PMP</th><th>Détail saisi</th></tr></thead><tbody>
+      ${sorties.map(s => `<tr><td>${dFr(s.date)}</td><td class="ch-num">${esc(s.bs||'-')}</td><td>${esc(s.produitDes||s.produitRef||'')}</td><td>${s.qty}</td><td class="ch-num">${fmt((Number(s.qty)||0)*(Number(s.pmpSortie)||0))}</td><td style="font-size:11px;">${esc(s.detail||'')}</td></tr>`).join('')}
+    </tbody></table>`:`<div class="ch-empty">Aucune sortie de stock trouvée.<br><span style="font-size:11px;">Les sorties sont reconnues quand le champ « Nom du chantier » de la sortie contient le nom du chantier (« ${esc(ch.nom)} ») ou le nom du client.</span></div>`}
+  </div>`;
+}
+
+// ── Onglet COÛTS & BÉNÉFICE (valorisation marchandises)
+const COUT_CATS = ['Marchandise','Quincaillerie','Main-d\'œuvre','Sous-traitance','Transport','Autre'];
+// Les sorties de stock sont valorisées au PMP (HT dans le stock) → converties en TTC
+// avec la TVA du produit, car tous les achats sont comptés en TTC.
+function pmpTTC(x){
+  const prod = (D.stock||[]).find(p => p.ref && p.ref === x.produitRef);
+  const t = typeof tauxTvaProduit === 'function' ? tauxTvaProduit(prod) : 20;
+  return (Number(x.pmpSortie)||0) * (1 + t/100);
+}
+const sortieTTC = x => (Number(x.qty)||0) * pmpTTC(x);
+function coutsOf(ch){
+  normCh(ch);
+  const manu = ch.couts.reduce((s, c) => s + (Number(c.qte)||0)*(Number(c.pu)||0), 0);
+  const sor = ch.inclSorties ? sortiesOf(ch).reduce((a, x) => a + sortieTTC(x), 0) : 0;
+  const ca = situation(ch).accTot; // montant final à recevoir, tel qu'accordé (HT ou TTC)
+  const tot = manu + sor;
+  return {manu, sor, tot, ca, benef: ca - tot, marge: ca ? (ca - tot)*100/ca : 0};
+}
+let coutEditId = null;
+function htmlCouts(ch){
+  const k = coutsOf(ch);
+  const parCat = {};
+  ch.couts.forEach(c => { const v = (Number(c.qte)||0)*(Number(c.pu)||0); parCat[c.cat||'Marchandise'] = (parCat[c.cat||'Marchandise']||0) + v; });
+  const e = coutEditId ? ch.couts.find(c => c.id === coutEditId) : null;
+  const rows = ch.couts.slice().sort((a, b) => (a.date||'').localeCompare(b.date||'')).map(c => `<tr>
+      <td>${dFr(c.date)}</td><td><span class="badge bgr" style="margin:0;">${esc(c.cat||'Marchandise')}</span></td>
+      <td><strong>${esc(c.des)}</strong>${c.four?`<div style="font-size:10px;color:var(--muted);">${esc(c.four)}</div>`:''}</td>
+      <td class="ch-num">${c.qte} ${esc(c.unite||'')}</td><td class="ch-num">${fmt(c.pu)}</td>
+      <td class="ch-num" style="font-weight:700;">${fmt((Number(c.qte)||0)*(Number(c.pu)||0))}</td>
+      <td style="font-size:11px;">${esc(c.ref||'')}</td>
+      <td style="white-space:nowrap;"><button class="btn-icon" onclick="chCoutEdit(${ch.id},${c.id})">✏️</button><button class="btn-icon" style="color:var(--red);" onclick="chCoutDel(${ch.id},${c.id})">🗑</button></td></tr>`).join('');
+  const inp = 'width:100%;min-width:0;padding:7px 9px;border:1px solid var(--border);border-radius:6px;font-family:var(--font);font-size:12px;min-height:34px;';
+  return `<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);">
+    <div class="stat-card blue"><div class="stat-label">Montant accordé ${baseLbl(ch)}</div><div class="stat-value" style="font-size:16px;">${fmt(k.ca)}</div><span class="badge bb">montant final à recevoir</span></div>
+    <div class="stat-card amber"><div class="stat-label">Total achats (TTC)</div><div class="stat-value" style="font-size:16px;">${fmt(k.tot)}</div><span class="badge ba">saisis ${fmt(k.manu)}${ch.inclSorties?' + stock '+fmt(k.sor):''}</span></div>
+    <div class="stat-card ${k.benef>=0?'green':'red'}"><div class="stat-label">Bénéfice estimé</div><div class="stat-value" style="font-size:16px;color:${k.benef>=0?'var(--green)':'var(--red)'};">${fmt(k.benef)}</div><span class="badge ${k.benef>=0?'bg':'br'}">MAD</span></div>
+    <div class="stat-card ${k.marge>=0?'green':'red'}"><div class="stat-label">Marge</div><div class="stat-value" style="font-size:16px;">${k.marge.toFixed(1)} %</div><span class="badge bgr">du montant accordé</span></div>
+  </div>
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">${e?'✏️ Modifier la ligne':'➕ Ajouter une ligne de valorisation'}</div>
+      <label style="font-size:11px;display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="checkbox" ${ch.inclSorties?'checked':''} onchange="chToggleSorties(${ch.id},this.checked)"> Inclure les sorties de stock du chantier (${fmt(sortiesOf(ch).reduce((a, x) => a + sortieTTC(x), 0))} MAD TTC au PMP)</label></div>
+    <div style="padding:12px 16px;display:grid;grid-template-columns:125px 125px minmax(150px,2fr) 70px 70px 95px minmax(90px,1fr) minmax(90px,1fr) auto;gap:8px;align-items:end;" class="ch-cout-form">
+      <input type="date" id="cc-date" value="${e?e.date:today()}" style="${inp}">
+      <select id="cc-cat" style="${inp}">${COUT_CATS.map(c => `<option ${(e?e.cat:'Marchandise')===c?'selected':''}>${c}</option>`).join('')}</select>
+      <input id="cc-des" placeholder="Désignation (ex : Panneau MDF 18mm)" value="${e?esc(e.des):''}" style="${inp}">
+      <input id="cc-qte" type="number" step="0.01" placeholder="Qté" value="${e?e.qte:''}" style="${inp}">
+      <input id="cc-unite" placeholder="Unité" value="${e?esc(e.unite||''):''}" style="${inp}">
+      <input id="cc-pu" type="number" step="0.01" placeholder="P.U TTC" value="${e?e.pu:''}" style="${inp}">
+      <div style="position:relative;min-width:0;">${fourPicker(e?e.four||'':'', inp)}</div>
+      <input id="cc-ref" placeholder="Réf. bon / note" value="${e?esc(e.ref||''):''}" style="${inp}">
+      <div style="display:flex;gap:6px;"><button class="btn btn-green btn-sm" onclick="chCoutSave(${ch.id})">${e?'💾':'＋ Ajouter'}</button>${e?`<button class="btn btn-outline btn-sm" onclick="chCoutCancel()">✕</button>`:''}</div>
+    </div>
+    <div style="padding:0 16px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('cc-json-file').click()">📥 Importer un fichier JSON de valorisation</button>
+      <input type="file" id="cc-json-file" accept=".json,application/json" style="display:none;" onchange="chValoFile(${ch.id},this)">
+      <button class="btn btn-outline btn-sm" onclick="chValoModele(${ch.id})">⬇ Modèle JSON</button>
+      <span style="font-size:10.5px;color:var(--muted);">Format <b>bes-valorisation-v1</b> — aussi accepté dans la page Import / Export JSON.</span>
+    </div>
+    <details style="padding:0 16px 12px;">
+      <summary style="cursor:pointer;font-size:12px;color:var(--bes);font-weight:600;">📋 Coller une liste (texte, sans JSON)</summary>
+      <div style="font-size:11px;color:var(--muted);margin:6px 0;">Une ligne par article : <b>désignation ; quantité ; prix unitaire</b> (option : ; unité ; fournisseur). Séparateur « ; » ou tabulation (copier-coller depuis Excel).</div>
+      <textarea id="cc-paste" rows="5" style="width:100%;${inp}" placeholder="Panneau MDF 18mm ; 12 ; 320&#10;Charnières Blum ; 40 ; 18 ; u ; Quincaillerie Atlas"></textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:6px;" onclick="chCoutPaste(${ch.id})">Importer les lignes</button>
+    </details>
+  </div>
+  <div class="card">
+    <div class="card-hdr"><div class="card-title">Valorisation des marchandises & coûts (${ch.couts.length} ligne${ch.couts.length>1?'s':''})</div>
+      <button class="btn btn-primary btn-sm" onclick="chPrintValorisation(${ch.id})">📄 PDF / Imprimer la valorisation</button>
+      <div style="font-size:11px;color:var(--muted);width:100%;">${Object.keys(parCat).map(c => `${esc(c)} : <b style="color:var(--txt);">${fmt(parCat[c])}</b>`).join(' · ')}</div></div>
+    ${rows?`<table><thead><tr><th>Date</th><th>Catégorie</th><th>Désignation</th><th>Qté</th><th>P.U TTC</th><th>Total TTC</th><th>Réf.</th><th></th></tr></thead><tbody>${rows}</tbody></table>`:'<div class="ch-empty">Aucune ligne. Ajoutez la valorisation des marchandises utilisées pour voir le bénéfice réel du chantier.</div>'}
+    <div class="ch-sum-box">
+      <span>Montant accordé ${baseLbl(ch)}</span><span class="v">${fmt(k.ca)}</span>
+      <span>− Achats saisis (TTC)</span><span class="v">${fmt(k.manu)}</span>
+      ${ch.inclSorties?`<span>− Sorties de stock (PMP TTC)</span><span class="v">${fmt(k.sor)}</span>`:''}
+      <span style="font-size:14px;font-weight:700;">= Bénéfice estimé</span><span class="v" style="font-size:14px;color:${k.benef>=0?'var(--green)':'var(--red)'};">${fmt(k.benef)} MAD</span>
+    </div>
+    <div style="padding:0 16px 12px;font-size:10.5px;color:var(--muted);">💡 Les achats sont comptés en TTC. Le montant accordé est le montant final à recevoir, en HT ou en TTC selon l'accord avec le client, sans conversion. Ce tableau est interne : il n'apparaît sur aucun document client.</div>
+  </div>`;
+}
+// Fournisseur : liste déroulante (fournisseurs enregistrés + déjà utilisés) OU saisie libre
+function fourPicker(cur, inp){
+  const reg = (D.fournisseurs||[]).map(f => (f.nom||'').trim()).filter(Boolean);
+  const regSet = new Set(reg.map(n => n.toLowerCase()));
+  const used = new Set();
+  chs().forEach(c => (c.couts||[]).forEach(x => { const n = (x.four||'').trim(); if(n && !regSet.has(n.toLowerCase())) used.add(n); }));
+  const all = new Set(reg.map(n => n.toLowerCase()).concat(Array.from(used).map(n => n.toLowerCase())));
+  const manuel = cur && !all.has(cur.toLowerCase());
+  const opt = n => `<option value="${esc(n)}" ${n.toLowerCase()===(cur||'').toLowerCase()?'selected':''}>${esc(n)}</option>`;
+  return `<select id="cc-four-sel" onchange="chFourMode()" style="${inp}${manuel?'display:none;':''}">
+      <option value="">— Fournisseur —</option>
+      ${reg.length?`<optgroup label="Fournisseurs enregistrés">${reg.sort((a, b) => a.localeCompare(b)).map(opt).join('')}</optgroup>`:''}
+      ${used.size?`<optgroup label="Déjà saisis">${Array.from(used).sort((a, b) => a.localeCompare(b)).map(opt).join('')}</optgroup>`:''}
+      <option value="__manuel__" ${manuel?'selected':''}>✏️ Saisir un autre…</option>
+    </select>
+    <div id="cc-four-wrap" style="display:${manuel?'flex':'none'};gap:4px;">
+      <input id="cc-four" placeholder="Nom du fournisseur" value="${manuel?esc(cur):''}" style="${inp}">
+      <button type="button" class="btn-icon" title="Revenir à la liste" onclick="chFourListe()">▾</button>
+    </div>`;
+}
+window.chFourMode = function(){
+  const sel = document.getElementById('cc-four-sel');
+  if(sel.value === '__manuel__'){
+    sel.style.display = 'none';
+    document.getElementById('cc-four-wrap').style.display = 'flex';
+    document.getElementById('cc-four').focus();
+  }
+};
+window.chFourListe = function(){
+  const sel = document.getElementById('cc-four-sel');
+  document.getElementById('cc-four-wrap').style.display = 'none';
+  document.getElementById('cc-four').value = '';
+  sel.style.display = ''; sel.value = '';
+};
+window.chToggleSorties = function(chId, v){ chById(chId).inclSorties = v; save(); renderDetail(); };
+window.chCoutEdit = function(chId, id){ coutEditId = id; renderDetail(); const el = document.getElementById('cc-des'); if(el) el.focus(); };
+window.chCoutCancel = function(){ coutEditId = null; renderDetail(); };
+window.chCoutSave = function(chId){
+  const ch = chById(chId);
+  const g = id => document.getElementById(id).value;
+  const des = g('cc-des').trim();
+  if(!des){ notify('Désignation requise', 'err'); return; }
+  const sel = document.getElementById('cc-four-sel');
+  const four = (sel && sel.value !== '__manuel__') ? sel.value : g('cc-four').trim();
+  const data = {date: g('cc-date') || today(), cat: g('cc-cat'), des, qte: Number(g('cc-qte'))||0, unite: g('cc-unite').trim(), pu: Number(g('cc-pu'))||0, four, ref: g('cc-ref').trim()};
+  if(coutEditId){ Object.assign(ch.couts.find(c => c.id === coutEditId), data); coutEditId = null; }
+  else ch.couts.push(Object.assign({id: Date.now()}, data));
+  save(); renderDetail();
+  const el = document.getElementById('cc-des'); if(el) el.focus();
+};
+window.chCoutDel = function(chId, id){
+  if(!confirm('Supprimer cette ligne ?')) return;
+  const ch = chById(chId); ch.couts = ch.couts.filter(c => c.id !== id); save(); renderDetail();
+};
+window.chCoutPaste = function(chId){
+  const ch = chById(chId);
+  const txt = document.getElementById('cc-paste').value;
+  const num = v => Number(String(v||'').replace(/\s/g,'').replace(/[^0-9,.\-]/g,'').replace(',', '.'))||0;
+  let n = 0;
+  txt.split(/\r?\n/).forEach((line, i) => {
+    const p = line.split(/\t|;/).map(x => x.trim());
+    if(!p[0]) return;
+    ch.couts.push({id: Date.now()+i, date: today(), cat: 'Marchandise', des: p[0], qte: num(p[1]), pu: num(p[2]), unite: p[3]||'', four: p[4]||'', ref: 'Liste manuscrite'});
+    n++;
+  });
+  if(!n){ notify('Aucune ligne reconnue', 'err'); return; }
+  save(); notify(n + ' ligne(s) importée(s) ✅', 'ok'); renderDetail();
+};
+
+// ── Import JSON de valorisation — format « bes-valorisation-v1 »
+// {
+//   "format": "bes-valorisation-v1",
+//   "client": "ABDERAZAQ SECOND WORK", "chantier": "Roma 1",
+//   "date": "2026-09-24", "ref": "Valorisation manuscrite n°1",
+//   "lignes": [ {"des":"Panneau MDF 18mm","qte":12,"unite":"u","pu":320,"cat":"Marchandise","four":"Atlas Bois"} ]
+// }
+// Plusieurs chantiers d'un coup : {"format":"bes-valorisation-v1","valorisations":[ {...}, {...} ]}
+// Un fichier bes-import-v1 peut aussi contenir une clé "valorisations".
+function valoList(data){
+  if(!data) return [];
+  if(Array.isArray(data)) return data;
+  if(Array.isArray(data.valorisations)) return data.valorisations;
+  if(Array.isArray(data.lignes)) return [data];
+  return [];
+}
+function importValorisations(data, forceChId){
+  const num = v => typeof v === 'number' ? v : (Number(String(v||'').replace(/\s/g,'').replace(',', '.'))||0);
+  const res = {lignes: 0, chantiers: [], crees: 0};
+  valoList(data).forEach((v, vi) => {
+    let ch = forceChId ? chById(forceChId) : null;
+    if(!ch){
+      const cn = String(v.client||v.cN||'').trim(), nom = String(v.chantier||v.ch||'').trim();
+      if(!cn || !nom) return;
+      ch = chs().find(c => c.clientNom === cn && normN(c.nom) === normN(nom));
+      if(!ch){
+        if(!clientOf(cn)) D.clients.push({nom: cn, email:'', tel:'', ville:'', adresse:'', ice:'', type: v.typeClient === 'particulier' ? 'particulier' : 'entreprise'});
+        ch = normCh({id: Date.now() + vi, nom, clientNom: cn, adresse:'', dateDebut: v.date || today(), statut:'en_cours', tel:'', notes:''});
+        chs().unshift(ch); res.crees++;
+      }
+    }
+    normCh(ch);
+    const ref = String(v.ref||'').trim();
+    if(ref && ch.couts.some(c => c.ref === ref)){
+      if(!confirm(`Le chantier « ${ch.nom} » contient déjà des lignes « ${ref} ».\n\nOK = remplacer ces lignes · Annuler = ajouter en plus`)) {}
+      else ch.couts = ch.couts.filter(c => c.ref !== ref);
+    }
+    (v.lignes||[]).forEach((l, i) => {
+      const des = String(l.des||l.designation||'').trim();
+      if(!des) return;
+      ch.couts.push({id: Date.now() + vi*1000 + i, date: l.date || v.date || today(),
+        cat: COUT_CATS.includes(l.cat) ? l.cat : 'Marchandise', des,
+        qte: num(l.qte != null ? l.qte : l.q), unite: l.unite||l.u||'', pu: num(l.pu),
+        four: l.four||l.fournisseur||v.fournisseur||'', ref: ref || 'Import JSON'});
+      res.lignes++;
+    });
+    if(!res.chantiers.includes(ch.nom)) res.chantiers.push(ch.nom);
+  });
+  return res;
+}
+window.chValoFile = function(chId, inp){
+  const f = inp.files && inp.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = e => {
+    inp.value = '';
+    let data; try{ data = JSON.parse(e.target.result); }catch(err){ notify('JSON invalide : ' + err.message, 'err'); return; }
+    const list = valoList(data);
+    if(!list.length){ notify('Aucune valorisation trouvée (format attendu : bes-valorisation-v1)', 'err'); return; }
+    const ch = chById(chId);
+    const autres = list.filter(v => v.chantier && normN(v.chantier) !== normN(ch.nom));
+    let force = chId;
+    if(autres.length){
+      if(confirm(`Ce fichier concerne : ${list.map(v => v.chantier||'?').join(', ')}.\n\nOK = importer dans « ${ch.nom} » · Annuler = répartir dans les chantiers indiqués par le fichier`)) force = chId;
+      else force = null;
+    }
+    const res = importValorisations(data, force);
+    save();
+    notify(`${res.lignes} ligne(s) de valorisation importée(s) ✅` + (res.crees ? ` — ${res.crees} chantier(s) créé(s)` : ''), 'ok');
+    renderDetail();
+  };
+  r.readAsText(f);
+};
+window.chValoModele = function(chId){
+  const ch = chById(chId);
+  const m = {format: 'bes-valorisation-v1', client: ch.clientNom, chantier: ch.nom, date: today(), ref: 'Valorisation manuscrite n°1',
+    lignes: [{des: 'Panneau MDF 18mm', qte: 12, unite: 'u', pu: 320, cat: 'Marchandise', four: 'Fournisseur'},
+             {des: 'Charnières', qte: 40, unite: 'u', pu: 18, cat: 'Quincaillerie', four: ''}]};
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(m, null, 2)], {type: 'application/json'}));
+  a.download = 'modele_valorisation_' + ch.nom.replace(/[^\w-]+/g, '_') + '.json';
+  a.click();
+};
+// Page Import / Export JSON : accepter aussi la valorisation
+if(typeof window.doImport === 'function'){
+  const _impValPrev = window.doImport;
+  window.doImport = function(){
+    const el = document.getElementById('json-paste');
+    let data = null; try{ data = JSON.parse((el.value||'').trim()); }catch(e){}
+    if(data && data.format === 'bes-valorisation-v1'){
+      const res = importValorisations(data, null);
+      if(!res.lignes){ showImportMsg('err', 'Aucune ligne importée : vérifiez "client", "chantier" et "lignes".'); return; }
+      save();
+      showImportMsg('ok', `✅ Valorisation importée : ${res.lignes} ligne(s) → chantier(s) ${res.chantiers.join(', ')}` + (res.crees ? ` (${res.crees} créé(s))` : ''));
+      notify('Valorisation importée ✅', 'ok');
+      return;
+    }
+    const r = _impValPrev.apply(this, arguments);
+    if(data && data.format === 'bes-import-v1' && Array.isArray(data.valorisations)){
+      const res = importValorisations({valorisations: data.valorisations}, null);
+      if(res.lignes){ save(); notify(`+ ${res.lignes} ligne(s) de valorisation importée(s) ✅`, 'ok'); }
+    }
+    return r;
+  };
+}
+
+// ─────────────────────────── IMPRESSIONS ───────────────────────────
+function logoSrc(){
+  try{ const m = exportPDF.toString().match(/data:image\/jpeg;base64,[A-Za-z0-9+/=]+/); return m ? m[0] : ''; }catch(e){ return ''; }
+}
+function printShell(title, refRight, clientBlock, bodyHtml){
+  const p = D.params || {};
+  const logo = logoSrc();
+  const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${esc(title)}</title>
+<style>
+@page{size:A4;margin:14mm 16mm 22mm 16mm;}
+@media print{html{-webkit-print-color-adjust:exact;print-color-adjust:exact;} thead{display:table-header-group;} tr{page-break-inside:avoid;} .keep{page-break-inside:avoid;break-inside:avoid;}}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+.logo-zone{display:flex;flex-direction:column;align-items:center;gap:6px;}
+.company-name{font-size:17px;font-weight:700;letter-spacing:.5px;text-align:center;}
+.ref{text-align:right;} .ref .t{font-size:17px;font-weight:700;} .ref .d{font-size:11px;color:#555;margin-top:3px;}
+.cl{margin-bottom:10px;} .cl div{margin-bottom:2px;}
+.sep{border:none;border-top:2px solid #2E5A8E;margin:10px 0;}
+table{width:100%;border-collapse:collapse;font-size:11px;}
+th{background:#2E5A8E;color:#fff;padding:7px 8px;font-size:10px;border:1px solid #1e3a5e;}
+td{border:1px solid #BBBBBB;padding:6px 8px;}
+tbody tr:nth-child(even) td{background:#F5F5F5;}
+.c{text-align:center;} .r{text-align:right;} .b{font-weight:700;}
+.q{background:#CFE2F3 !important;font-weight:700;text-align:center;} .tt{background:#D6EAF8 !important;font-weight:700;text-align:right;}
+h3{font-size:12px;color:#2E5A8E;margin:14px 0 6px;letter-spacing:.3px;}
+.tot td{font-weight:700;}
+.sign{display:flex;justify-content:space-between;margin-top:26px;font-size:11px;}
+.sign div{width:45%;border-top:1px solid #999;padding-top:6px;min-height:70px;}
+.legal-footer{position:fixed;bottom:0;left:0;right:0;border-top:1.5px solid #2E5A8E;padding:5px 16mm;font-size:8px;color:#555;text-align:center;background:#fff;line-height:1.4;}
+</style></head><body>
+<div class="header">
+  <div class="logo-zone">${logo?`<img src="${logo}" style="width:110px;height:auto;">`:''}<div class="company-name">${esc(p.nom||'BOIS ECO-STYLE SARL.AU')}</div></div>
+  <div class="ref">${refRight}</div>
+</div>
+<div class="cl">${clientBlock}</div>
+<hr class="sep">
+${bodyHtml}
+<div class="legal-footer">
+  R.C-MARRAKECH: ${esc(p.rc||'149.327')} N° – T.P: ${esc(p.tp||'47535592')} – IF: ${esc(p.if_||'65950037')} – ICE: ${esc(p.ice||'003485652000094')} – Tél: ${esc(p.tel||'06.61.40.59.17')}<br>
+  Siège social à : ${esc(p.siege||'LOTISSEMENT AL KARAM LOT N°42, CENTRE SIDI ABDELLAH GHIATE, EL HAOUZ.')}<br>
+  Capital de ${esc(p.capital||'100.000,00 dirhams')}
+</div>
+${window.BES_PRINT_FIX||''}
+<script>window.onload=function(){setTimeout(function(){window.print();},300);};window.onafterprint=function(){window.close();};<\/script>
+</body></html>`;
+  const w = window.open('', '_blank', 'width=850,height=1100,scrollbars=yes');
+  if(!w){ notify('Autoriser les popups pour imprimer', 'err'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+function clientBlockOf(ch){
+  const cl = clientOf(ch.clientNom) || {};
+  return `<div><b>CLIENT :</b> ${esc(ch.clientNom)}</div>
+    <div><b>CHANTIER :</b> ${esc(ch.nom)}${ch.adresse?' — '+esc(ch.adresse):''}</div>
+    ${cl.ice?`<div><b>ICE :</b> ${esc(cl.ice)}</div>`:''}`;
+}
+
+let printChId = null;
+window.chOpenPrint = function(chId){
+  const ch = chById(chId);
+  printChId = chId;
+  if(!ch.livraisons.length){ notify('Aucune livraison enregistrée pour ce chantier', 'err'); return; }
+  document.getElementById('chp-scope').innerHTML = '<option value="">Tous les produits livrés du chantier (cumul)</option>' +
+    ch.livraisons.slice().sort((a, b) => (a.date||'').localeCompare(b.date||'')).map(bl => `<option value="${bl.id}">${esc(bl.num)} du ${dFr(bl.date)} — ${(bl.lignes||[]).length} produit(s)</option>`).join('');
+  document.getElementById('chp-prix').checked = false;
+  openM('modal-ch-print');
+};
+window.chDoPrintLivres = function(){
+  const v = document.getElementById('chp-scope').value;
+  closeModal('modal-ch-print');
+  chPrintLivres(printChId, v ? Number(v) : null, document.getElementById('chp-prix').checked);
+};
+window.chPrintLivres = function(chId, blId, withPrix){
+  const ch = chById(chId);
+  let lignes, titre, date, sub = '';
+  if(blId){
+    const bl = ch.livraisons.find(b => b.id === blId);
+    lignes = bl.lignes.map(x => Object.assign({}, x, {bls: bl.num}));
+    titre = 'BON DE LIVRAISON N° : ' + bl.num; date = bl.date;
+    const devisNums = Array.from(new Set(bl.lignes.map(x => x.docNum))).join(', ');
+    sub = `<div class="d">Réf. devis : ${esc(devisNums)}</div>`;
+  } else {
+    const map = new Map();
+    ch.livraisons.slice().sort((a, b) => (a.date||'').localeCompare(b.date||'')).forEach(bl => bl.lignes.forEach(x => {
+      const k = keyIt(x.docId, x.idx);
+      if(!map.has(k)) map.set(k, Object.assign({}, x, {q: 0, bls: []}));
+      const m = map.get(k); m.q = r2(m.q + x.q); m.bls.push(bl.num + ' (' + dFr(bl.date) + ')');
+    }));
+    lignes = Array.from(map.values()).map(x => Object.assign(x, {bls: x.bls.join(', ')}));
+    titre = 'ÉTAT DES PRODUITS LIVRÉS'; date = today();
+    sub = `<div class="d">${ch.livraisons.length} livraison(s)</div>`;
+  }
+  let ht = 0, tvaAmt = 0;
+  const rows = lignes.map((x, i) => {
+    const tot = x.q * x.pu; ht += tot; tvaAmt += tot * (x.tva||20) / 100;
+    return `<tr><td class="c">${i+1}</td><td class="b">${esc(x.des)}</td><td class="c" style="font-size:10px;">${esc(x.dim)}</td><td class="c">${esc(x.unite)}</td><td class="q">${x.q}</td>
+      ${withPrix?`<td class="r" style="background:#CFE2F3;">${fmt(x.pu)}</td><td class="tt">${fmt(tot)}</td>`:''}
+      <td class="c" style="font-size:9.5px;">${esc(blId ? x.docNum : x.bls)}</td></tr>`;
+  }).join('');
+  const body = `<table>
+    <thead><tr><th style="width:4%;">N°</th><th style="text-align:left;">DÉSIGNATION</th><th>DIMENSIONS</th><th>UNITÉ</th><th style="background:#CFE2F3;color:#1a1a1a;">QTÉ LIVRÉE</th>
+    ${withPrix?'<th style="background:#CFE2F3;color:#1a1a1a;">P.U HT</th><th style="background:#D6EAF8;color:#1a1a1a;">TOTAL HT</th>':''}
+    <th>${blId?'DEVIS':'LIVRAISON(S)'}</th></tr></thead><tbody>${rows}</tbody></table>
+    ${withPrix?`<table class="keep" style="margin-top:0;"><tr class="tot"><td style="width:80%;">Total H.T</td><td class="tt">${fmt(ht)}</td></tr><tr class="tot"><td>TVA</td><td class="tt">${fmt(tvaAmt)}</td></tr><tr class="tot"><td style="font-size:12px;">Total TTC</td><td class="tt" style="font-size:12px;color:#1F497D;">${fmt(ht+tvaAmt)}</td></tr></table>`:''}
+    <div class="sign keep"><div><b>Livré par : ${esc(D.params&&D.params.nom||'BOIS ECO-STYLE SARL.AU')}</b><br>Signature &amp; cachet</div><div><b>Reçu par le client</b><br>Nom, date &amp; signature</div></div>`;
+  printShell(titre + ' — ' + ch.clientNom, `<div class="t">${titre}</div><div class="d">DATE : ${dFr(date)}</div>${sub}`, clientBlockOf(ch), body);
+};
+
+window.chPrintSituation = function(chId){
+  const ch = normCh(chById(chId));
+  const s = situation(ch);
+  const devisRows = ch.devis.filter(l => l.valide).map(l => {
+    const d = docById(l.docId); if(!d) return '';
+    const acc = accorde(l);
+    const p = paiementsDevis(ch, d.id).reduce((a, e) => a + (Number(e.montant)||0), 0);
+    return `<tr><td class="b">${esc(d.num)}</td><td class="c">${dFr(d.date)}</td><td class="c">${l.base==='HT'?'HT':'TTC'}</td><td class="r">${fmt(acc)}</td><td class="r">${fmt(p)}</td><td class="tt">${fmt(acc-p)}</td></tr>`;
+  }).join('');
+  const pays = paiements(ch).slice().sort((a, b) => (a.date||'').localeCompare(b.date||''));
+  const payRows = pays.map(e => { const d = e.docId != null ? docById(e.docId) : null; return `<tr><td class="c">${dFr(e.date)}</td><td>${esc(e.mode||'')}${e.refChq?' — '+esc(e.refChq):''}</td><td class="c">${d?esc(d.num):'Chantier'}</td><td class="r b">${fmt(e.montant)}</td></tr>`; }).join('');
+  const body = `
+    <h3>DEVIS VALIDÉS — MONTANTS ACCORDÉS</h3>
+    <table><thead><tr><th>DEVIS N°</th><th>DATE</th><th>BASE</th><th>MONTANT ACCORDÉ</th><th>AVANCÉ</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th></tr></thead>
+    <tbody>${devisRows || '<tr><td colspan="6" class="c">Aucun devis validé</td></tr>'}</tbody></table>
+    <h3>AVANCES & PAIEMENTS REÇUS</h3>
+    <table><thead><tr><th>DATE</th><th>MODE / RÉFÉRENCE</th><th>IMPUTÉ SUR</th><th>MONTANT (MAD)</th></tr></thead>
+    <tbody>${payRows || '<tr><td colspan="4" class="c">Aucun paiement</td></tr>'}</tbody></table>
+    <table class="keep" style="margin-top:12px;">
+      <tr class="tot"><td style="width:75%;">Total accordé</td><td class="tt">${fmt(s.accTot)}</td></tr>
+      <tr class="tot"><td>Total avances reçues</td><td class="tt">${fmt(s.paye)}</td></tr>
+      <tr class="tot"><td style="font-size:12.5px;color:#9C0006;">RESTE À PAYER</td><td class="tt" style="font-size:12.5px;color:#9C0006;background:#FFE4E1 !important;">${fmt(s.reste)}</td></tr>
+    </table>
+    <div style="margin-top:10px;font-size:10.5px;color:#444;">Avancement des livraisons : ${s.nbLiv} / ${s.nbTot} produit(s) livré(s) (${s.pctLiv}%).</div>
+    <div class="keep" style="text-align:right;margin-top:18px;font-style:italic;">Fait à Marrakech, le ${dFr(today())}<br><br><b>Signature &amp; Cachet :</b></div>`;
+  printShell('Situation chantier — ' + ch.nom, `<div class="t">SITUATION DU CHANTIER</div><div class="d">DATE : ${dFr(today())}</div>`, clientBlockOf(ch), body);
+};
+
+window.chPrintSituationClient = function(clientNom){
+  const list = chs().map(normCh).filter(c => c.clientNom === clientNom);
+  if(!list.length) return;
+  let A = 0, P = 0, R = 0;
+  const rows = list.map(ch => {
+    const s = situation(ch); A += s.accTot; P += s.paye; R += s.reste;
+    const dv = ch.devis.filter(l => l.valide).map(l => (docById(l.docId)||{}).num).filter(Boolean).join(', ');
+    const fc = allFactures(ch).map(f => f.num).join(', ');
+    return `<tr><td class="b">${esc(ch.nom)}</td><td style="font-size:10px;">${esc(dv||'-')}</td><td style="font-size:10px;">${esc(fc||'-')}</td><td class="r">${fmt(s.accTot)}</td><td class="r">${fmt(s.paye)}</td><td class="tt">${fmt(s.reste)}</td><td class="c">${s.nbTot?s.pctLiv+' %':'-'}</td></tr>`;
+  }).join('');
+  const cl = clientOf(clientNom) || {};
+  const body = `<table><thead><tr><th style="text-align:left;">CHANTIER</th><th>DEVIS VALIDÉS</th><th>FACTURES</th><th>ACCORDÉ</th><th>AVANCES</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>LIVRÉ</th></tr></thead><tbody>${rows}</tbody></table>
+    <table class="keep" style="margin-top:12px;">
+      <tr class="tot"><td style="width:75%;">Total accordé (${list.length} chantier${list.length>1?'s':''})</td><td class="tt">${fmt(A)}</td></tr>
+      <tr class="tot"><td>Total avances reçues</td><td class="tt">${fmt(P)}</td></tr>
+      <tr class="tot"><td style="font-size:12.5px;color:#9C0006;">RESTE À PAYER</td><td class="tt" style="font-size:12.5px;color:#9C0006;background:#FFE4E1 !important;">${fmt(R)}</td></tr>
+    </table>
+    <div class="keep" style="text-align:right;margin-top:18px;font-style:italic;">Fait à Marrakech, le ${dFr(today())}<br><br><b>Signature &amp; Cachet :</b></div>`;
+  printShell('Situation client — ' + clientNom, `<div class="t">SITUATION CLIENT</div><div class="d">DATE : ${dFr(today())}</div>`,
+    `<div><b>CLIENT :</b> ${esc(clientNom)}</div>${cl.ice?`<div><b>ICE :</b> ${esc(cl.ice)}</div>`:''}${cl.adresse?`<div><b>ADRESSE :</b> ${esc(cl.adresse)}</div>`:''}`, body);
+};
+
+// ── Blocs d'impression internes (admin / valorisation)
+const INTERNE = '<div style="display:inline-block;margin-top:4px;background:#9C0006;color:#fff;font-size:9px;font-weight:700;padding:2px 8px;border-radius:3px;letter-spacing:.5px;">DOCUMENT INTERNE — CONFIDENTIEL</div>';
+function htmlValoTable(ch){
+  const k = coutsOf(ch);
+  const cats = {};
+  ch.couts.forEach(c => (cats[c.cat||'Marchandise'] = cats[c.cat||'Marchandise'] || []).push(c));
+  let n = 0, rows = '';
+  Object.keys(cats).sort((a, b) => COUT_CATS.indexOf(a) - COUT_CATS.indexOf(b)).forEach(cat => {
+    let sub = 0;
+    rows += `<tr><td colspan="7" style="background:#eef4fb !important;font-weight:700;color:#2E5A8E;">${esc(cat.toUpperCase())}</td></tr>`;
+    cats[cat].slice().sort((a, b) => (a.date||'').localeCompare(b.date||'')).forEach(c => {
+      const t = (Number(c.qte)||0)*(Number(c.pu)||0); sub += t; n++;
+      rows += `<tr><td class="c">${n}</td><td class="c" style="font-size:9.5px;">${dFr(c.date)}</td><td class="b">${esc(c.des)}${c.four?`<div style="font-weight:400;font-size:9px;color:#555;">${esc(c.four)}${c.ref?' · '+esc(c.ref):''}</div>`:''}</td><td class="c">${c.qte}</td><td class="c">${esc(c.unite||'')}</td><td class="r">${fmt(c.pu)}</td><td class="tt">${fmt(t)}</td></tr>`;
+    });
+    rows += `<tr class="tot"><td colspan="6" class="r">Sous-total ${esc(cat)}</td><td class="tt">${fmt(sub)}</td></tr>`;
+  });
+  const sorties = sortiesOf(ch);
+  let sorRows = '';
+  if(ch.inclSorties && sorties.length){
+    sorRows = `<tr><td colspan="7" style="background:#eef4fb !important;font-weight:700;color:#2E5A8E;">SORTIES DE STOCK (PMP TTC)</td></tr>` +
+      sorties.map(x => { n++; const t = sortieTTC(x); return `<tr><td class="c">${n}</td><td class="c" style="font-size:9.5px;">${dFr(x.date)}</td><td class="b">${esc(x.produitDes||x.produitRef||'')}<div style="font-weight:400;font-size:9px;color:#555;">${esc(x.bs||'')}</div></td><td class="c">${x.qty}</td><td class="c"></td><td class="r">${fmt(pmpTTC(x))}</td><td class="tt">${fmt(t)}</td></tr>`; }).join('') +
+      `<tr class="tot"><td colspan="6" class="r">Sous-total sorties de stock</td><td class="tt">${fmt(k.sor)}</td></tr>`;
+  }
+  const table = (rows || sorRows) ? `<table><thead><tr><th style="width:4%;">N°</th><th style="width:10%;">DATE</th><th style="text-align:left;">DÉSIGNATION</th><th style="width:7%;">QTÉ</th><th style="width:8%;">UNITÉ</th><th style="width:12%;">P.U TTC</th><th style="width:14%;background:#D6EAF8;color:#1a1a1a;">TOTAL TTC</th></tr></thead><tbody>${rows}${sorRows}</tbody></table>` : '<div style="padding:8px;color:#777;">Aucune ligne de valorisation.</div>';
+  return {table, k};
+}
+function htmlBilan(k, ch){
+  return `<table class="keep" style="margin-top:10px;">
+    <tr class="tot"><td style="width:75%;">Montant accordé ${baseLbl(ch)} (montant final à recevoir)</td><td class="tt">${fmt(k.ca)}</td></tr>
+    <tr class="tot"><td>− Total achats TTC</td><td class="tt">${fmt(k.tot)}</td></tr>
+    <tr class="tot"><td style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};">= BÉNÉFICE ESTIMÉ (marge ${k.marge.toFixed(1)} %)</td><td class="tt" style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};background:${k.benef>=0?'#dcfce7':'#FFE4E1'} !important;">${fmt(k.benef)}</td></tr>
+  </table>`;
+}
+
+// Libellé de la base du montant accordé : HT, TTC, ou mixte si les devis validés n'ont pas la même base
+function baseLbl(ch){
+  const b = Array.from(new Set(ch.devis.filter(l => l.valide).map(l => l.base === 'HT' ? 'HT' : 'TTC')));
+  return b.length === 1 ? b[0] : (b.length ? '(HT / TTC selon devis)' : '');
+}
+window.chPrintValorisation = function(chId){
+  const ch = normCh(chById(chId));
+  const {table, k} = htmlValoTable(ch);
+  const body = `<h3>VALORISATION DES ACHATS (TTC)</h3>${table}<h3>BILAN</h3>${htmlBilan(k, ch)}
+    <div style="margin-top:8px;font-size:9.5px;color:#555;">Achats comptés en TTC. Montant accordé = montant final à recevoir (HT ou TTC selon l'accord client).</div>`;
+  printShell('Valorisation — ' + ch.nom, `<div class="t">VALORISATION CHANTIER</div><div class="d">DATE : ${dFr(today())}</div>${INTERNE}`, clientBlockOf(ch), body);
+};
+
+window.chPrintSituationAdmin = function(chId){
+  const ch = normCh(chById(chId));
+  const s = situation(ch);
+  const {table, k} = htmlValoTable(ch);
+  const facs = allFactures(ch);
+  // 1. Synthèse
+  const syn = `<table class="keep">
+    <tr class="tot"><td style="width:75%;">Montant accordé ${baseLbl(ch)}</td><td class="tt">${fmt(s.accTot)}</td></tr>
+    <tr class="tot"><td>Facturé TTC (${facs.length} facture${facs.length>1?'s':''})</td><td class="tt">${fmt(s.facture)}</td></tr>
+    <tr class="tot"><td>Avances reçues</td><td class="tt">${fmt(s.paye)}</td></tr>
+    <tr class="tot"><td style="color:#9C0006;">RESTE À PAYER</td><td class="tt" style="color:#9C0006;background:#FFE4E1 !important;">${fmt(s.reste)}</td></tr>
+    <tr class="tot"><td>Total achats TTC (valorisation${ch.inclSorties?' + sorties de stock':''})</td><td class="tt">${fmt(k.tot)}</td></tr>
+    <tr class="tot"><td style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};">BÉNÉFICE ESTIMÉ (marge ${k.marge.toFixed(1)} %)</td><td class="tt" style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};background:${k.benef>=0?'#dcfce7':'#FFE4E1'} !important;">${fmt(k.benef)}</td></tr>
+    <tr class="tot"><td>Livraison</td><td class="tt">${s.nbLiv} / ${s.nbTot} produits (${s.pctLiv} %)</td></tr>
+  </table>`;
+  // 2. Devis
+  const devisRows = ch.devis.map(l => {
+    const d = docById(l.docId); if(!d) return '';
+    const acc = accorde(l); const p = paiementsDevis(ch, d.id).reduce((a, e) => a + (Number(e.montant)||0), 0);
+    const fs = facturesOfDevis(ch, d).map(f => f.num).join(', ');
+    return `<tr><td class="b">${esc(d.num)}</td><td class="c">${l.valide?'✔ '+dFr(l.dateValidation):'Non validé'}</td><td class="c">${l.base==='HT'?'HT':'TTC'}${l.montant!=null&&l.montant!==''?' (négocié)':''}</td><td class="r">${fmt(d.ht)}</td><td class="r">${fmt(d.ttc)}</td><td class="r b">${fmt(acc)}</td><td class="r">${fmt(p)}</td><td class="tt">${fmt(acc-p)}</td><td style="font-size:9.5px;">${esc(fs||'-')}</td></tr>`;
+  }).join('');
+  // 3. Paiements
+  const pays = paiements(ch).slice().sort((a, b) => (a.date||'').localeCompare(b.date||''));
+  const payRows = pays.map(e => { const d = e.docId != null ? docById(e.docId) : null; return `<tr><td class="c">${dFr(e.date)}</td><td>${esc(e.mode||'')}${e.refChq?' — '+esc(e.refChq):''}</td><td class="c">${d?esc(d.num):'Chantier'}</td><td style="font-size:9.5px;">${esc(e.note||'')}</td><td class="r b">${fmt(e.montant)}</td></tr>`; }).join('');
+  // 4. Produits
+  const lignes = lignesAValider(ch);
+  const prodRows = lignes.map((L, i) => { const e = etatLigne(ch, L); const lbl = e.l.replace(/^[^A-Za-zÀ-ÿ]+/, ''); return `<tr><td class="c">${i+1}</td><td class="c" style="font-size:9.5px;">${esc(L.doc.num)}</td><td class="b">${esc(L.it.des)}</td><td class="c" style="font-size:9.5px;">${esc(L.it.dim||'')}</td><td class="c">${esc(L.it.unite||'')}</td><td class="q">${L.q}</td><td class="c b" style="color:#065f46;">${r2(L.liv)}</td><td class="c b" style="color:${L.reste>0?'#9C0006':'#065f46'};">${L.reste}</td><td class="c" style="font-size:9.5px;">${esc(lbl)}</td></tr>`; }).join('');
+  const blRows = ch.livraisons.slice().sort((a, b) => (a.date||'').localeCompare(b.date||'')).map(bl => { const f = bl.factureId ? docById(bl.factureId) : null; return `<tr><td class="b">${esc(bl.num)}</td><td class="c">${dFr(bl.date)}</td><td style="font-size:9.5px;">${(bl.lignes||[]).map(x => esc(x.des)+' ×'+x.q).join(' ; ')}</td><td class="r">${fmt((bl.lignes||[]).reduce((a, x) => a + x.q*x.pu, 0))}</td><td class="c">${f?esc(f.num):'—'}</td></tr>`; }).join('');
+
+  const body = `
+    <h3>1. SYNTHÈSE</h3>${syn}
+    <h3>2. DEVIS & FACTURES</h3>
+    <table><thead><tr><th>DEVIS</th><th>VALIDATION</th><th>BASE</th><th>HT</th><th>TTC</th><th>ACCORDÉ</th><th>AVANCÉ</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>FACTURES</th></tr></thead><tbody>${devisRows||'<tr><td colspan="9" class="c">Aucun devis</td></tr>'}</tbody></table>
+    <h3>3. AVANCES & PAIEMENTS</h3>
+    <table><thead><tr><th>DATE</th><th>MODE / RÉF.</th><th>IMPUTÉ SUR</th><th>NOTE</th><th>MONTANT</th></tr></thead><tbody>${payRows||'<tr><td colspan="5" class="c">Aucun paiement</td></tr>'}</tbody></table>
+    <h3>4. PRODUITS — LIVRAISON</h3>
+    <table><thead><tr><th>N°</th><th>DEVIS</th><th style="text-align:left;">DÉSIGNATION</th><th>DIM.</th><th>UNITÉ</th><th style="background:#CFE2F3;color:#1a1a1a;">CMD</th><th>LIVRÉ</th><th>RESTE</th><th>STATUT</th></tr></thead><tbody>${prodRows||'<tr><td colspan="9" class="c">Aucun devis validé</td></tr>'}</tbody></table>
+    ${blRows?`<table style="margin-top:6px;"><thead><tr><th>BL</th><th>DATE</th><th style="text-align:left;">PRODUITS</th><th>VALEUR HT</th><th>FACTURE</th></tr></thead><tbody>${blRows}</tbody></table>`:''}
+    <h3>5. VALORISATION DES ACHATS (TTC)</h3>${table}
+    ${htmlBilan(k, ch)}
+    ${ch.notes?`<div style="margin-top:10px;font-size:10px;"><b>Notes :</b> ${esc(ch.notes)}</div>`:''}`;
+  printShell('Situation admin — ' + ch.nom, `<div class="t">SITUATION ADMIN</div><div class="d">DATE : ${dFr(today())}</div>${INTERNE}`, clientBlockOf(ch) + `<div><b>STATUT :</b> ${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l} · Début : ${dFr(ch.dateDebut)}</div>`, body);
+};
+
+window.chPrintSituationAdminClient = function(clientNom){
+  const list = chs().map(normCh).filter(c => c.clientNom === clientNom).sort((a, b) => (a.nom||'').localeCompare(b.nom||'', 'fr', {numeric: true}));
+  if(!list.length) return;
+  const T = {acc:0, ca:0, paye:0, reste:0, cout:0, benef:0};
+  const rows = list.map(ch => {
+    const s = situation(ch), k = coutsOf(ch);
+    T.acc += s.accTot; T.ca += k.ca; T.paye += s.paye; T.reste += s.reste; T.cout += k.tot; T.benef += k.benef;
+    return `<tr><td class="b">${esc(ch.nom)}<div style="font-weight:400;font-size:9px;color:#555;">${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l}</div></td><td class="r">${fmt(s.accTot)} <span style="font-size:8.5px;color:#555;">${baseLbl(ch).replace(/[()]/g,'')}</span></td><td class="r">${fmt(s.paye)}</td><td class="r b" style="color:#9C0006;">${fmt(s.reste)}</td><td class="r">${fmt(k.tot)}</td><td class="tt" style="color:${k.benef>=0?'#065f46':'#9C0006'};">${fmt(k.benef)}</td><td class="c">${k.ca?k.marge.toFixed(1)+' %':'-'}</td><td class="c">${s.nbTot?s.nbLiv+'/'+s.nbTot:'-'}</td></tr>`;
+  }).join('');
+  const mg = T.ca ? (T.benef*100/T.ca).toFixed(1)+' %' : '-';
+  const body = `<table><thead><tr><th style="text-align:left;">CHANTIER</th><th>ACCORDÉ</th><th>AVANCES</th><th>RESTE</th><th>ACHATS TTC</th><th style="background:#D6EAF8;color:#1a1a1a;">BÉNÉFICE</th><th>MARGE</th><th>LIVRÉ</th></tr></thead>
+    <tbody>${rows}<tr class="tot"><td>TOTAL (${list.length} chantier${list.length>1?'s':''})</td><td class="r">${fmt(T.acc)}</td><td class="r">${fmt(T.paye)}</td><td class="r" style="color:#9C0006;">${fmt(T.reste)}</td><td class="r">${fmt(T.cout)}</td><td class="tt">${fmt(T.benef)}</td><td class="c">${mg}</td><td></td></tr></tbody></table>
+    <div style="margin-top:8px;font-size:9.5px;color:#555;">Achats en TTC (valorisation + sorties de stock si incluses). Bénéfice = montant accordé (HT ou TTC, montant final à recevoir) − achats TTC.</div>`;
+  const cl = clientOf(clientNom) || {};
+  printShell('Situation admin client — ' + clientNom, `<div class="t">SITUATION ADMIN CLIENT</div><div class="d">DATE : ${dFr(today())}</div>${INTERNE}`,
+    `<div><b>CLIENT :</b> ${esc(clientNom)}</div>${cl.ice?`<div><b>ICE :</b> ${esc(cl.ice)}</div>`:''}`, body);
+};
+
+// ─────────────────────────── INIT ───────────────────────────
+if(!D.chantiers) D.chantiers = [];
+injectDomCh();
+try{ if(chSyncFromDocs()) save(); }catch(e){ console.error('Sync chantiers', e); }
+
+})();
+
 </script>
 </body>
 </html>
