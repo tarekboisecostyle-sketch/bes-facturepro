@@ -7978,55 +7978,16 @@ window.chPrintLivres = function(chId, blId, withPrix){
 
 window.chPrintSituation = function(chId){
   const ch = normCh(chById(chId));
-  printShell('Situation chantier — ' + ch.nom, `<div class="t">SITUATION DU CHANTIER</div><div class="d">DATE : ${dFr(today())}</div>`, clientBlockOf(ch), bodySituation(ch, true));
+  printShell('Situation chantier — ' + ch.nom, `<div class="t">SITUATION DU CHANTIER</div><div class="d">DATE : ${dFr(today())}</div>`, clientBlockOf(ch) + `<div><b>STATUT :</b> ${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l} · Début : ${dFr(ch.dateDebut)}</div>`, bodySituation(ch, true));
 };
+// Situation client = même contenu que la situation admin, sans achats / bénéfice / marge / valorisation / notes internes
 function bodySituation(ch, withSign){
-  const s = situation(ch);
-  const devisRows = ch.devis.filter(l => l.valide).map(l => {
-    const d = docById(l.docId); if(!d) return '';
-    const acc = accorde(l);
-    const p = paiementsDevis(ch, d.id).reduce((a, e) => a + (Number(e.montant)||0), 0);
-    return `<tr><td class="b">${esc(d.num)}</td><td class="c">${dFr(d.date)}</td><td class="c">${l.base==='HT'?'HT':'TTC'}</td><td class="r">${fmt(acc)}</td><td class="r">${fmt(p)}</td><td class="tt">${fmt(acc-p)}</td></tr>`;
-  }).join('');
-  const pays = paiements(ch).slice().sort((a, b) => (a.date||'').localeCompare(b.date||''));
-  const payRows = pays.map(e => { const d = e.docId != null ? docById(e.docId) : null; return `<tr><td class="c">${dFr(e.date)}</td><td>${esc(e.mode||'')}${e.refChq?' — '+esc(e.refChq):''}</td><td class="c">${d?esc(d.num):'Chantier'}</td><td class="r b">${fmt(e.montant)}</td></tr>`; }).join('');
-  const body = `
-    <h3>DEVIS VALIDÉS — MONTANTS ACCORDÉS</h3>
-    <table><thead><tr><th>DEVIS N°</th><th>DATE</th><th>BASE</th><th>MONTANT ACCORDÉ</th><th>AVANCÉ</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th></tr></thead>
-    <tbody>${devisRows || '<tr><td colspan="6" class="c">Aucun devis validé</td></tr>'}</tbody></table>
-    <h3>AVANCES & PAIEMENTS REÇUS</h3>
-    <table><thead><tr><th>DATE</th><th>MODE / RÉFÉRENCE</th><th>IMPUTÉ SUR</th><th>MONTANT (MAD)</th></tr></thead>
-    <tbody>${payRows || '<tr><td colspan="4" class="c">Aucun paiement</td></tr>'}</tbody></table>
-    <table class="keep" style="margin-top:12px;">
-      <tr class="tot"><td style="width:75%;">Total accordé</td><td class="tt">${fmt(s.accTot)}</td></tr>
-      <tr class="tot"><td>Total avances reçues</td><td class="tt">${fmt(s.paye)}</td></tr>
-      <tr class="tot"><td style="font-size:12.5px;color:#9C0006;">RESTE À PAYER</td><td class="tt" style="font-size:12.5px;color:#9C0006;background:#FFE4E1 !important;">${fmt(s.reste)}</td></tr>
-    </table>
-    <div style="margin-top:10px;font-size:10.5px;color:#444;">Avancement des livraisons : ${s.nbLiv} / ${s.nbTot} produit(s) livré(s) (${s.pctLiv}%).</div>
-    ${withSign?`<div class="keep" style="text-align:right;margin-top:18px;font-style:italic;">Fait à Marrakech, le ${dFr(today())}<br><br><b>Signature &amp; Cachet :</b></div>`:''}`;
-  return body;
+  return bodySituationAdmin(ch, true) + (withSign?`<div class="keep" style="text-align:right;margin-top:18px;font-style:italic;">Fait à Marrakech, le ${dFr(today())}<br><br><b>Signature &amp; Cachet :</b></div>`:'');
 }
-
 window.chPrintSituationClient = function(clientNom){
-  const list = chs().map(normCh).filter(c => c.clientNom === clientNom);
-  if(!list.length) return;
-  let A = 0, P = 0, R = 0;
-  const rows = list.map(ch => {
-    const s = situation(ch); A += s.accTot; P += s.paye; R += s.reste;
-    const dv = ch.devis.filter(l => l.valide).map(l => (docById(l.docId)||{}).num).filter(Boolean).join(', ');
-    const fc = allFactures(ch).map(f => f.num).join(', ');
-    return `<tr><td class="b">${esc(ch.nom)}</td><td style="font-size:10px;">${esc(dv||'-')}</td><td style="font-size:10px;">${esc(fc||'-')}</td><td class="r">${fmt(s.accTot)}</td><td class="r">${fmt(s.paye)}</td><td class="tt">${fmt(s.reste)}</td><td class="c">${s.nbTot?s.pctLiv+' %':'-'}</td></tr>`;
-  }).join('');
-  const cl = clientOf(clientNom) || {};
-  const body = `<table><thead><tr><th style="text-align:left;">CHANTIER</th><th>DEVIS VALIDÉS</th><th>FACTURES</th><th>ACCORDÉ</th><th>AVANCES</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>LIVRÉ</th></tr></thead><tbody>${rows}</tbody></table>
-    <table class="keep" style="margin-top:12px;">
-      <tr class="tot"><td style="width:75%;">Total accordé (${list.length} chantier${list.length>1?'s':''})</td><td class="tt">${fmt(A)}</td></tr>
-      <tr class="tot"><td>Total avances reçues</td><td class="tt">${fmt(P)}</td></tr>
-      <tr class="tot"><td style="font-size:12.5px;color:#9C0006;">RESTE À PAYER</td><td class="tt" style="font-size:12.5px;color:#9C0006;background:#FFE4E1 !important;">${fmt(R)}</td></tr>
-    </table>
-    <div class="keep" style="text-align:right;margin-top:18px;font-style:italic;">Fait à Marrakech, le ${dFr(today())}<br><br><b>Signature &amp; Cachet :</b></div>`;
-  printShell('Situation client — ' + clientNom, `<div class="t">SITUATION CLIENT</div><div class="d">DATE : ${dFr(today())}</div>`,
-    `<div><b>CLIENT :</b> ${esc(clientNom)}</div>${cl.ice?`<div><b>ICE :</b> ${esc(cl.ice)}</div>`:''}${cl.adresse?`<div><b>ADRESSE :</b> ${esc(cl.adresse)}</div>`:''}`, body);
+  const ids = chs().filter(c => c.clientNom === clientNom).map(c => c.id);
+  if(!ids.length) return;
+  chPrintSituationMulti(ids, 'client', false);
 };
 
 // ── Blocs d'impression internes (admin / valorisation)
@@ -8080,9 +8041,9 @@ window.chPrintSituationAdmin = function(chId){
   const ch = normCh(chById(chId));
   printShell('Situation admin — ' + ch.nom, `<div class="t">SITUATION ADMIN</div><div class="d">DATE : ${dFr(today())}</div>${INTERNE}`, clientBlockOf(ch) + `<div><b>STATUT :</b> ${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l} · Début : ${dFr(ch.dateDebut)}</div>`, bodySituationAdmin(ch));
 };
-function bodySituationAdmin(ch){
+function bodySituationAdmin(ch, client){
   const s = situation(ch);
-  const {table, k} = htmlValoTable(ch);
+  const {table, k} = client ? {table:'', k:null} : htmlValoTable(ch);
   const facs = allFactures(ch);
   // 1. Synthèse
   const syn = `<table class="keep">
@@ -8090,8 +8051,8 @@ function bodySituationAdmin(ch){
     <tr class="tot"><td>Facturé TTC (${facs.length} facture${facs.length>1?'s':''})</td><td class="tt">${fmt(s.facture)}</td></tr>
     <tr class="tot"><td>Avances reçues</td><td class="tt">${fmt(s.paye)}</td></tr>
     <tr class="tot"><td style="color:#9C0006;">RESTE À PAYER</td><td class="tt" style="color:#9C0006;background:#FFE4E1 !important;">${fmt(s.reste)}</td></tr>
-    <tr class="tot"><td>Total achats TTC (valorisation${ch.inclSorties?' + sorties de stock':''})</td><td class="tt">${fmt(k.tot)}</td></tr>
-    <tr class="tot"><td style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};">BÉNÉFICE ESTIMÉ (marge ${k.marge.toFixed(1)} %)</td><td class="tt" style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};background:${k.benef>=0?'#dcfce7':'#FFE4E1'} !important;">${fmt(k.benef)}</td></tr>
+    ${client?'':`<tr class="tot"><td>Total achats TTC (valorisation${ch.inclSorties?' + sorties de stock':''})</td><td class="tt">${fmt(k.tot)}</td></tr>
+    <tr class="tot"><td style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};">BÉNÉFICE ESTIMÉ (marge ${k.marge.toFixed(1)} %)</td><td class="tt" style="font-size:12.5px;color:${k.benef>=0?'#065f46':'#9C0006'};background:${k.benef>=0?'#dcfce7':'#FFE4E1'} !important;">${fmt(k.benef)}</td></tr>`}
     <tr class="tot"><td>Livraison</td><td class="tt">${s.nbLiv} / ${s.nbTot} produits (${s.pctLiv} %)</td></tr>
   </table>`;
   // 2. Devis
@@ -8099,11 +8060,11 @@ function bodySituationAdmin(ch){
     const d = docById(l.docId); if(!d) return '';
     const acc = accorde(l); const p = paiementsDevis(ch, d.id).reduce((a, e) => a + (Number(e.montant)||0), 0);
     const fs = facturesOfDevis(ch, d).map(f => f.num).join(', ');
-    return `<tr><td class="b">${esc(d.num)}</td><td class="c">${l.valide?'✔ '+dFr(l.dateValidation):'Non validé'}</td><td class="c">${l.base==='HT'?'HT':'TTC'}${l.montant!=null&&l.montant!==''?' (négocié)':''}</td><td class="r">${fmt(d.ht)}</td><td class="r">${fmt(d.ttc)}</td><td class="r b">${fmt(acc)}</td><td class="r">${fmt(p)}</td><td class="tt">${fmt(acc-p)}</td><td style="font-size:9.5px;">${esc(fs||'-')}</td></tr>`;
+    return `<tr><td class="b">${esc(d.num)}</td><td class="c">${l.valide?'✔ '+dFr(l.dateValidation):'Non validé'}</td><td class="c">${l.base==='HT'?'HT':'TTC'}${!client&&l.montant!=null&&l.montant!==''?' (négocié)':''}</td><td class="r">${fmt(d.ht)}</td><td class="r">${fmt(d.ttc)}</td><td class="r b">${fmt(acc)}</td><td class="r">${fmt(p)}</td><td class="tt">${fmt(acc-p)}</td><td style="font-size:9.5px;">${esc(fs||'-')}</td></tr>`;
   }).join('');
   // 3. Paiements
   const pays = paiements(ch).slice().sort((a, b) => (a.date||'').localeCompare(b.date||''));
-  const payRows = pays.map(e => { const d = e.docId != null ? docById(e.docId) : null; return `<tr><td class="c">${dFr(e.date)}</td><td>${esc(e.mode||'')}${e.refChq?' — '+esc(e.refChq):''}</td><td class="c">${d?esc(d.num):'Chantier'}</td><td style="font-size:9.5px;">${esc(e.note||'')}</td><td class="r b">${fmt(e.montant)}</td></tr>`; }).join('');
+  const payRows = pays.map(e => { const d = e.docId != null ? docById(e.docId) : null; return `<tr><td class="c">${dFr(e.date)}</td><td>${esc(e.mode||'')}${e.refChq?' — '+esc(e.refChq):''}</td><td class="c">${d?esc(d.num):'Chantier'}</td>${client?'':`<td style="font-size:9.5px;">${esc(e.note||'')}</td>`}<td class="r b">${fmt(e.montant)}</td></tr>`; }).join('');
   // 4. Produits
   const lignes = lignesAValider(ch);
   const prodRows = lignes.map((L, i) => { const e = etatLigne(ch, L); const lbl = e.l.replace(/^[^A-Za-zÀ-ÿ]+/, ''); return `<tr><td class="c">${i+1}</td><td class="c" style="font-size:9.5px;">${esc(L.doc.num)}</td><td class="b">${esc(L.it.des)}</td><td class="c" style="font-size:9.5px;">${esc(L.it.dim||'')}</td><td class="c">${esc(L.it.unite||'')}</td><td class="q">${L.q}</td><td class="c b" style="color:#065f46;">${r2(L.liv)}</td><td class="c b" style="color:${L.reste>0?'#9C0006':'#065f46'};">${L.reste}</td><td class="c" style="font-size:9.5px;">${esc(lbl)}</td></tr>`; }).join('');
@@ -8114,13 +8075,13 @@ function bodySituationAdmin(ch){
     <h3>2. DEVIS & FACTURES</h3>
     <table><thead><tr><th>DEVIS</th><th>VALIDATION</th><th>BASE</th><th>HT</th><th>TTC</th><th>ACCORDÉ</th><th>AVANCÉ</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>FACTURES</th></tr></thead><tbody>${devisRows||'<tr><td colspan="9" class="c">Aucun devis</td></tr>'}</tbody></table>
     <h3>3. AVANCES & PAIEMENTS</h3>
-    <table><thead><tr><th>DATE</th><th>MODE / RÉF.</th><th>IMPUTÉ SUR</th><th>NOTE</th><th>MONTANT</th></tr></thead><tbody>${payRows||'<tr><td colspan="5" class="c">Aucun paiement</td></tr>'}</tbody></table>
+    <table><thead><tr><th>DATE</th><th>MODE / RÉF.</th><th>IMPUTÉ SUR</th>${client?'':'<th>NOTE</th>'}<th>MONTANT</th></tr></thead><tbody>${payRows||`<tr><td colspan="${client?4:5}" class="c">Aucun paiement</td></tr>`}</tbody></table>
     <h3>4. PRODUITS — LIVRAISON</h3>
     <table><thead><tr><th>N°</th><th>DEVIS</th><th style="text-align:left;">DÉSIGNATION</th><th>DIM.</th><th>UNITÉ</th><th style="background:#CFE2F3;color:#1a1a1a;">CMD</th><th>LIVRÉ</th><th>RESTE</th><th>STATUT</th></tr></thead><tbody>${prodRows||'<tr><td colspan="9" class="c">Aucun devis validé</td></tr>'}</tbody></table>
     ${blRows?`<table style="margin-top:6px;"><thead><tr><th>BL</th><th>DATE</th><th style="text-align:left;">PRODUITS</th><th>VALEUR HT</th><th>FACTURE</th></tr></thead><tbody>${blRows}</tbody></table>`:''}
-    <h3>5. VALORISATION DES ACHATS (TTC)</h3>${table}
-    ${htmlBilan(k, ch)}
-    ${ch.notes?`<div style="margin-top:10px;font-size:10px;"><b>Notes :</b> ${esc(ch.notes)}</div>`:''}`;
+    ${client?'':`<h3>5. VALORISATION DES ACHATS (TTC)</h3>${table}
+    ${htmlBilan(k, ch)}`}
+    ${!client&&ch.notes?`<div style="margin-top:10px;font-size:10px;"><b>Notes :</b> ${esc(ch.notes)}</div>`:''}`;
   return body;
 }
 
@@ -8151,7 +8112,7 @@ window.chPrintSituationMulti = function(ids, mode, detail){
   if(!list.length){ notify('Aucun chantier sélectionné', 'err'); return; }
   const clients = Array.from(new Set(list.map(c => c.clientNom||'—')));
   const multiCl = clients.length > 1;
-  const nCols = admin ? 8 : 7;
+  const nCols = admin ? 8 : 5;
   const T = {acc:0, paye:0, reste:0, cout:0, benef:0, ca:0};
   let rows = '';
   clients.forEach(cn => {
@@ -8165,15 +8126,13 @@ window.chPrintSituationMulti = function(ids, mode, detail){
         const k = coutsOf(ch); G.cout += k.tot; G.benef += k.benef; G.ca += k.ca;
         rows += `<tr><td class="b">${esc(ch.nom)}<div style="font-weight:400;font-size:9px;color:#555;">${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l}</div></td><td class="r">${fmt(s.accTot)} <span style="font-size:8.5px;color:#555;">${baseLbl(ch).replace(/[()]/g,'')}</span></td><td class="r">${fmt(s.paye)}</td><td class="r b" style="color:#9C0006;">${fmt(s.reste)}</td><td class="r">${fmt(k.tot)}</td><td class="tt" style="color:${k.benef>=0?'#065f46':'#9C0006'};">${fmt(k.benef)}</td><td class="c">${k.ca?k.marge.toFixed(1)+' %':'-'}</td><td class="c">${s.nbTot?s.nbLiv+'/'+s.nbTot:'-'}</td></tr>`;
       } else {
-        const dv = ch.devis.filter(l => l.valide).map(l => (docById(l.docId)||{}).num).filter(Boolean).join(', ');
-        const fc = allFactures(ch).map(f => f.num).join(', ');
-        rows += `<tr><td class="b">${esc(ch.nom)}</td><td style="font-size:10px;">${esc(dv||'-')}</td><td style="font-size:10px;">${esc(fc||'-')}</td><td class="r">${fmt(s.accTot)}</td><td class="r">${fmt(s.paye)}</td><td class="tt">${fmt(s.reste)}</td><td class="c">${s.nbTot?s.pctLiv+' %':'-'}</td></tr>`;
+        rows += `<tr><td class="b">${esc(ch.nom)}<div style="font-weight:400;font-size:9px;color:#555;">${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l}</div></td><td class="r">${fmt(s.accTot)} <span style="font-size:8.5px;color:#555;">${baseLbl(ch).replace(/[()]/g,'')}</span></td><td class="r">${fmt(s.paye)}</td><td class="r b" style="color:#9C0006;">${fmt(s.reste)}</td><td class="c">${s.nbTot?s.nbLiv+'/'+s.nbTot:'-'}</td></tr>`;
       }
     });
     if(multiCl){
       rows += admin
         ? `<tr class="tot"><td>Sous-total ${esc(cn)}</td><td class="r">${fmt(G.acc)}</td><td class="r">${fmt(G.paye)}</td><td class="r" style="color:#9C0006;">${fmt(G.reste)}</td><td class="r">${fmt(G.cout)}</td><td class="tt">${fmt(G.benef)}</td><td class="c">${G.ca?(G.benef*100/G.ca).toFixed(1)+' %':'-'}</td><td></td></tr>`
-        : `<tr class="tot"><td colspan="3">Sous-total ${esc(cn)}</td><td class="r">${fmt(G.acc)}</td><td class="r">${fmt(G.paye)}</td><td class="tt">${fmt(G.reste)}</td><td></td></tr>`;
+        : `<tr class="tot"><td>Sous-total ${esc(cn)}</td><td class="r">${fmt(G.acc)}</td><td class="r">${fmt(G.paye)}</td><td class="r" style="color:#9C0006;">${fmt(G.reste)}</td><td></td></tr>`;
     }
     Object.keys(T).forEach(k => T[k] += G[k]);
   });
@@ -8185,7 +8144,8 @@ window.chPrintSituationMulti = function(ids, mode, detail){
       <tbody>${rows}<tr class="tot"><td>TOTAL (${nb})</td><td class="r">${fmt(T.acc)}</td><td class="r">${fmt(T.paye)}</td><td class="r" style="color:#9C0006;">${fmt(T.reste)}</td><td class="r">${fmt(T.cout)}</td><td class="tt">${fmt(T.benef)}</td><td class="c">${mg}</td><td></td></tr></tbody></table>
       <div style="margin-top:8px;font-size:9.5px;color:#555;">Achats en TTC (valorisation + sorties de stock si incluses). Bénéfice = montant accordé (HT ou TTC, montant final à recevoir) − achats TTC.</div>`;
   } else {
-    body = `<h3>RÉCAPITULATIF — ${nb.toUpperCase()}</h3><table><thead><tr><th style="text-align:left;">CHANTIER</th><th>DEVIS VALIDÉS</th><th>FACTURES</th><th>ACCORDÉ</th><th>AVANCES</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>LIVRÉ</th></tr></thead><tbody>${rows}</tbody></table>
+    body = `<h3>RÉCAPITULATIF — ${nb.toUpperCase()}</h3><table><thead><tr><th style="text-align:left;">CHANTIER</th><th>ACCORDÉ</th><th>AVANCES</th><th style="background:#D6EAF8;color:#1a1a1a;">RESTE</th><th>LIVRÉ</th></tr></thead>
+      <tbody>${rows}<tr class="tot"><td>TOTAL (${nb})</td><td class="r">${fmt(T.acc)}</td><td class="r">${fmt(T.paye)}</td><td class="r" style="color:#9C0006;">${fmt(T.reste)}</td><td></td></tr></tbody></table>
       <table class="keep" style="margin-top:12px;">
         <tr class="tot"><td style="width:75%;">Total accordé (${nb})</td><td class="tt">${fmt(T.acc)}</td></tr>
         <tr class="tot"><td>Total avances reçues</td><td class="tt">${fmt(T.paye)}</td></tr>
@@ -8197,7 +8157,7 @@ window.chPrintSituationMulti = function(ids, mode, detail){
     body += list.map((ch, i) => `<div style="page-break-before:always;break-before:page;">
       <div style="border-left:4px solid #2E5A8E;background:#eef4fb;padding:8px 12px;margin-bottom:6px;">
         <div style="font-size:13px;font-weight:700;color:#2E5A8E;">${i+1}/${list.length} — ${esc(ch.nom)}</div>
-        <div style="font-size:10.5px;color:#333;margin-top:2px;">Client : ${esc(ch.clientNom)}${ch.adresse?' · '+esc(ch.adresse):''}${admin?` · Statut : ${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l} · Début : ${dFr(ch.dateDebut)}`:''}</div>
+        <div style="font-size:10.5px;color:#333;margin-top:2px;">Client : ${esc(ch.clientNom)}${ch.adresse?' · '+esc(ch.adresse):''} · Statut : ${(CH_STATUTS[ch.statut]||CH_STATUTS.en_cours).l} · Début : ${dFr(ch.dateDebut)}</div>
       </div>
       ${admin ? bodySituationAdmin(ch) : bodySituation(ch, false)}
     </div>`).join('');
