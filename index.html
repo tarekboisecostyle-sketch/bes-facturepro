@@ -1449,7 +1449,7 @@ function renderDashboard() {
 
   // Derniers docs
   const tb = document.getElementById('ds-docs');
-  tb.innerHTML = D.docs.slice(0,6).map(d =>
+  tb.innerHTML = D.docs.slice().sort(cmpDocs).slice(0,6).map(d =>
     `<tr><td><strong>${d.num}</strong></td><td><span class="bes-badge">${d.type}</span></td>
     <td>${d.clientNom||'-'}</td><td style="font-family:var(--mono);">${fmt(d.ttc)}</td>
     <td><span class="status ${stC[d.statut]||'s-b'}">${stL[d.statut]||'-'}</span></td></tr>`
@@ -2207,6 +2207,17 @@ function saveDoc(withJson) {
   renderDocs(); renderDashboard(); renderPaiements();
 }
 
+// Tri chronologique des documents : date la plus récente en haut, puis numéro décroissant.
+// Un vieux devis importé se range donc à sa date, pas en tête de liste.
+function docSeqKey(num){
+  const m=String(num||'').match(/(\d+)-(\d{4})/);
+  return m ? parseInt(m[2])*100000+parseInt(m[1]) : 0;
+}
+function cmpDocs(a,b){
+  const da=a.date||'', db=b.date||'';
+  if(da!==db) return da<db?1:-1;
+  return docSeqKey(b.num)-docSeqKey(a.num);
+}
 function renderDocs() {
   fillMoisSelect('flt-mois-docs', D.docs.map(d=>d.date));
   fillAnneeSelect('flt-annee-docs', D.docs.map(d=>d.date));
@@ -2231,7 +2242,7 @@ function renderDocs() {
     if(fCh && fCh!=='__none__' && d.chantierNom!==fCh) return false;
     if(q && !d.num.toLowerCase().includes(q.toLowerCase()) && !(d.clientNom||'').toLowerCase().includes(q.toLowerCase()) && !(d.chantierNom||'').toLowerCase().includes(q.toLowerCase())) return false;
     return true;
-  });
+  }).sort(cmpDocs);
   const tb = document.getElementById('list-docs');
   if(!list.length) { tb.innerHTML='<tr><td colspan="8" style="text-align:center;padding:22px;color:var(--muted);">Aucun document</td></tr>'; return; }
   tb.innerHTML = list.map(d => {
@@ -4611,12 +4622,19 @@ function doImport() {
       numsAttribues.push(`${d.docType||'DEVIS'} → ${num}`);
     }
     // Vérifier doublon
-    if(D.docs.find(x=>x.num===num&&x.type===d.docType)){skipped++;return;}
+    // Doublon : proposer de remplacer le document existant (mise à jour) au lieu de l'ignorer
+    const exIdx=D.docs.findIndex(x=>x.num===num&&x.type===d.docType);
+    let ancien=null;
+    if(exIdx>=0){
+      if(!confirm(`${d.docType} ${num} existe déjà dans l'application.\n\nOK = le remplacer par la version importée (statut, chantier et notes conservés)\nAnnuler = l'ignorer`)){skipped++;return;}
+      ancien=D.docs[exIdx];
+      numsAttribues.push(`${d.docType} ${num} → mis à jour`);
+    }
     let ci=D.clients.findIndex(c=>c.nom===d.cN);
     if(ci<0&&d.cN){D.clients.push({nom:d.cN,adresse:d.cA||'',ice:d.cI||'',tel:'',email:'',ville:'',type:'entreprise'});ci=D.clients.length-1;}
     const ht=d.ht||(d.items||[]).reduce((s,r)=>s+((Number(r.u)||1)*(Number(r.q)||1))*(r.pu||0),0);
     const tva=d.tvaV||20; const ttc=d.ttc||(ht+ht*tva/100);
-    D.docs.unshift({id:Date.now()+imported,type:d.docType,num,date:d.date,statut:'brouillon',
+    const nouveauDoc={id:Date.now()+imported,type:d.docType,num,date:d.date,statut:'brouillon',
       clientNom:d.cN||'',clientAdresse:d.cA||'',clientIce:d.cI||'',
       items:(d.items||[]).map(r=>{
         // Replie le multiplicateur u (superficie/métrage) dans la quantité affichée.
@@ -4625,7 +4643,17 @@ function doImport() {
         const qEff=Math.round(uu*qq*1000)/1000;
         return {des:r.des,dim:r.dim||'',unite:r.unite||'u',q:qEff,pu:r.pu};
       }),
-      ht,tva,ttc,avancePct:d.aPct||0,notes:'',chantierNom:d.ch||d.chantier||''});
+      ht,tva,ttc,avancePct:d.aPct||0,notes:'',chantierNom:d.ch||d.chantier||''};
+    if(ancien){
+      // Garder ce qui a été saisi dans l'app sur l'ancien document
+      Object.keys(ancien).forEach(k=>{ if(!(k in nouveauDoc)) nouveauDoc[k]=ancien[k]; });
+      nouveauDoc.id=ancien.id; nouveauDoc.statut=ancien.statut||'brouillon';
+      nouveauDoc.notes=ancien.notes||''; nouveauDoc.chantierNom=nouveauDoc.chantierNom||ancien.chantierNom||'';
+      if(!d.aPct && ancien.avancePct) nouveauDoc.avancePct=ancien.avancePct;
+      D.docs[exIdx]=nouveauDoc;
+    } else {
+      D.docs.unshift(nouveauDoc);
+    }
     imported++;
     // Classer le document selon sa nature
     const dt=(d.docType||'').toUpperCase();
